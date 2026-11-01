@@ -20,17 +20,8 @@ function pierce(o, k, r)
     o + (-b + sqrt(b^2 - (dot(o, o) - r^2))) * k
 end
 
-# ICRS direction → ECEF unit vector: first-order precession to date, GMST with UT1 ≈ UTC;
-# nutation/aberration/UT1-UTC neglected (sub-arcmin, ≤1e-4 rad/m² in RM)
-function source_direction(src::ICRSCoords, t)
-    d = (t - DateTime(2000, 1, 1, 12)) /ₜ Day   # days since J2000.0
-    T = d / 36525
-    m = deg2rad(1.2812323 * T); n = deg2rad(0.5567530 * T)
-    ra = src.ra + m + n * sin(src.ra) * tan(src.dec)
-    dec = src.dec + n * cos(src.ra)
-    h = ra - deg2rad(mod(280.46061837 + 360.98564736629 * d, 360))
-    SVector(cos(dec) * cos(h), cos(dec) * sin(h), sin(dec))
-end
+# ICRS direction → Earth-fixed unit vector: precession, nutation, Earth rotation with UT1 ≈ UTC; no polar motion
+source_direction(src::ICRSCoords, t) = r_eci_to_ecef(J2000(), PEF(), julian_day(t)) * cartesian(src).vec
 
 # IGRF field component (T) along -k, i.e. toward the observer, at ECEF position x
 function bpar(x, k, t)

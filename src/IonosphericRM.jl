@@ -1,11 +1,12 @@
 module IonosphericRM
 
 using Dates
-using DateFormats: /ₜ, yeardecimal
+using DateFormats: /ₜ, julian_day, yeardecimal
 using LinearAlgebra
 using StaticArrays
-using SkyCoords: AbstractSkyCoords, ICRSCoords
+using SkyCoords: AbstractSkyCoords, ICRSCoords, cartesian
 using SatelliteToolboxGeomagneticField: igrf
+using SatelliteToolboxTransformations: r_eci_to_ecef, J2000, PEF
 using Uncertain: ±ᵤ
 
 export ionospheric_rm, GlobalMap, SLM, MSLM

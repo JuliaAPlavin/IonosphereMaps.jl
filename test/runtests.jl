@@ -13,7 +13,7 @@ end
 
 @testitem "constants and geometry" setup=[Track] begin
     using IonosphericRM: K_RM, ecef, up, pierce, source_direction
-    using LinearAlgebra, Dates
+    using LinearAlgebra, Dates, SkyCoords
     @test K_RM ≈ 2.6312e-13 rtol=1e-4
     o = ecef(Track.SITE)
     @test pierce(o, normalize(o), 6821e3) ≈ 6821e3 * normalize(o)
@@ -21,6 +21,14 @@ end
     el(t) = rad2deg(asin(dot(source_direction(Track.SRC, t), up(Track.SITE))))
     @test el(Track.SCANS[1]) ≈ 37.0826 atol=0.01
     @test el(Track.SCANS[end]) ≈ 30.659 atol=0.02
+    # Earth-fixed direction, SOFA c2t06a (IAU 2006/2000A, no polar motion, UT1 = UTC); also near the celestial poles
+    angle(a, b) = rad2deg(acos(clamp(dot(a, b), -1, 1))) * 3600
+    @testset for (src, t, ref) in [
+            (ICRSCoords(deg2rad(30.0), deg2rad(89.9)), DateTime(2025, 7, 25, 6, 6), [-0.0003361819, 0.0012448534, 0.9999991687]),
+            (Track.SRC, DateTime(2025, 7, 25, 6, 6), [0.6660455275, 0.6885773449, 0.2867831853]),
+            (ICRSCoords(deg2rad(200.0), deg2rad(-89.5)), DateTime(2031, 1, 3, 17, 45), [-0.0055652884, -0.0021720281, -0.9999821548])]
+        @test angle(source_direction(src, t), normalize(ref)) < 0.5   # arcsec
+    end
 end
 
 @testitem "global map: verified reference values" setup=[Track] begin
@@ -29,8 +37,8 @@ end
     # independently verified calculator (vs spinifex 2.0 and AIPS TECOR), CODE final GIM 2025-206
     slm = [-1.0456, -1.1890, -1.3138, -1.4600, -1.5775, -1.7246, -1.8365, -2.0016, -2.1344, -2.2655, -2.3375, -2.4113, -2.4826, -2.5611]
     mslm = [-1.0184, -1.1611, -1.2851, -1.4303, -1.5465, -1.6913, -1.8009, -1.9613, -2.0891, -2.2135, -2.2788, -2.3440, -2.4047, -2.4701]
-    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=SLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS)) ≈ slm atol=2e-4   # norm over the 14 scans
-    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=MSLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS)) ≈ mslm atol=2e-4
+    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=SLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS)) ≈ slm atol=3e-4   # norm over the 14 scans; references to 1e-4, sky direction 7″ off ours
+    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=MSLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS)) ≈ mslm atol=3e-4
     # circumpolar source, time outside the map epochs
     @test_throws BoundsError ionospheric_rm(GlobalMap(path; mapping=MSLM()), Track.SITE, ICRSCoords(0.0, -1.2), DateTime(2025, 7, 25, 20))
     # any sky frame: 3C138 in galactic coordinates
