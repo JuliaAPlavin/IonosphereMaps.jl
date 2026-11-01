@@ -24,23 +24,56 @@ end
 end
 
 @testitem "global map: verified reference values" setup=[Track] begin
-    using Dates, SkyCoords
+    using Dates, SkyCoords, Uncertain
     path = joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz")
     # independently verified calculator (vs spinifex 2.0 and AIPS TECOR), CODE final GIM 2025-206
     slm = [-1.0456, -1.1890, -1.3138, -1.4600, -1.5775, -1.7246, -1.8365, -2.0016, -2.1344, -2.2655, -2.3375, -2.4113, -2.4826, -2.5611]
     mslm = [-1.0184, -1.1611, -1.2851, -1.4303, -1.5465, -1.6913, -1.8009, -1.9613, -2.0891, -2.2135, -2.2788, -2.3440, -2.4047, -2.4701]
-    @test ionospheric_rm.(Ref(GlobalMap(path; mapping=SLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS) ≈ slm atol=2e-4   # norm over the 14 scans
-    @test ionospheric_rm.(Ref(GlobalMap(path; mapping=MSLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS) ≈ mslm atol=2e-4
+    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=SLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS)) ≈ slm atol=2e-4   # norm over the 14 scans
+    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=MSLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS)) ≈ mslm atol=2e-4
     # circumpolar source, time outside the map epochs
     @test_throws ErrorException ionospheric_rm(GlobalMap(path; mapping=MSLM()), Track.SITE, ICRSCoords(0.0, -1.2), DateTime(2025, 7, 25, 20))
 end
 
 @testitem "horizon and non-IONEX input" setup=[Track] begin
-    using Dates
+    using Dates, Uncertain
     m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"); mapping=MSLM())
-    @test isnan(ionospheric_rm(m, Track.SITE, Track.SRC, DateTime(2025, 7, 25, 1)))    # 3C138 below the horizon
+    @test isnan(U.value(@inferred ionospheric_rm(m, Track.SITE, Track.SRC, DateTime(2025, 7, 25, 1))))    # 3C138 below the horizon
+    @test isnan(@inferred ionospheric_rm(GlobalMap(joinpath(Track.DATA, "codg0600.21i_crop.gz"); mapping=MSLM()), Track.SITE, Track.SRC, DateTime(2021, 3, 1, 3)))
     @test_throws Exception GlobalMap(@__FILE__; mapping=MSLM())
     @test_throws UndefKeywordError GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"))
+end
+
+@testitem "RMS maps: VTEC and RM uncertainties" setup=[Track] begin
+    using Dates, Uncertain
+    using IonosphericRM: read_ionex, vtec
+    points = [(-23.98, 24.26), (-39.17, 26.65), (-30.85, 21.34), (-25.0, 40.0)]
+    # spinifex 2.0 interpolate_ionex: (TEC, RMS) in TECU, Earth rotation on, UQRG RMS correction off
+    cod = [
+        DateTime(2025, 7, 25, 6, 0)     => [(14.669162, 1.314800), (11.080644, 2.633000), (9.258624, 1.382312), (18.900000, 1.600000)],
+        DateTime(2025, 7, 25, 6, 7, 30) => [(15.348065, 1.385412), (11.882880, 2.718849), (10.110481, 1.489642), (19.693750, 1.600000)],
+        DateTime(2025, 7, 25, 10, 20)   => [(30.792941, 1.446933), (32.429112, 2.681652), (28.865619, 1.552504), (30.133333, 1.500000)]]
+    upc = [
+        DateTime(2025, 7, 25, 6, 0)     => [(15.877715, 3.206038), (11.038096, 3.311288), (12.772272, 3.248312), (20.500000, 3.200000)],
+        DateTime(2025, 7, 25, 6, 7, 30) => [(16.496600, 3.214119), (11.221681, 3.327341), (13.349103, 3.217131), (21.718750, 3.231250)],
+        DateTime(2025, 7, 25, 10, 20)   => [(32.118028, 3.268679), (35.637708, 4.017779), (31.646952, 3.220445), (31.883333, 3.250000)],
+        DateTime(2025, 7, 25, 23, 55)   => [(7.560292, 3.340718), (4.810465, 3.828603), (7.626979, 3.306528), (7.200000, 3.233333)]]
+    @testset for (file, ref) in ["COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz" => cod, "UPC0OPSRAP_20252060000_01D_15M_GIM_crop.INX.Z" => upc]
+        I = read_ionex(joinpath(Track.DATA, file))
+        v = [vtec(I, t, lat, lon) for (t, _) in ref for (lat, lon) in points]
+        expected = reduce(vcat, last.(ref))
+        @test U.value.(v) ≈ first.(expected) atol=3e-6   # norm over values given to 1e-6
+        @test U.uncertainty.(v) ≈ last.(expected) atol=3e-6
+    end
+    @test vtec(read_ionex(joinpath(Track.DATA, "codg0600.21i_crop.gz")), DateTime(2021, 3, 1, 3), -30.0, 21.0) isa Float64   # no RMS maps
+
+    # spinifex 2.0 get_rm_from_skycoord, single layer at 450 km (= SLM): RM and the TEC part of its error, |K·RMS·M·B∥|,
+    # rescaled from its rounded constant 2.62e-6 to K_RM
+    m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"); mapping=SLM())
+    rm = [ionospheric_rm(m, Track.SITE, Track.SRC, t) for t in DateTime(2025, 7, 25) .+ Minute.([366, 480, 612])]
+    @test U.value.(rm) ≈ [-1.045650, -1.843167, -2.561181] atol=3e-4
+    @test U.uncertainty.(rm) ≈ [0.105383, 0.106252, 0.136799] atol=3e-5
+    @test (@inferred ionospheric_rm(m, Track.SITE, Track.SRC, DateTime(2025, 7, 25, 8))) isa Uncertain.Value
 end
 
 @testitem "gzip, unix compress and plain files read alike" setup=[Track] begin
@@ -138,6 +171,9 @@ end
         @test_throws ArgumentError append_ionex(a, (; b..., k => v))
     end
     # a one-interval gap interpolates like any map interval; a longer one does not
+    # RMS maps join like TEC maps, and only with RMS maps
+    @test append_ionex((; a..., rms=a.tec), (; b..., rms=2b.tec)).rms == cat(a.tec[:, :, 1:3], 2b.tec; dims=3)
+    @test_throws MethodError append_ionex(a, (; b..., rms=b.tec))
     @test append_ionex(a, (; b..., epochs=b.epochs .+ Hour(1))).epochs == DateTime(2021, 2, 28, 21):Hour(1):DateTime(2021, 3, 1, 7)
     @test_throws ArgumentError append_ionex(a, (; b..., epochs=b.epochs .+ Hour(2)))
     # a wider overlap: the later file from its first epoch on

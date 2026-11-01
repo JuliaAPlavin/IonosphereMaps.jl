@@ -39,8 +39,10 @@ function append_ionex(a, b)
     first(b.epochs) - last(a.epochs) <= spacing ||
         throw(ArgumentError("gap between IONEX files: $(last(a.epochs)) to $(first(b.epochs)), maps are $spacing apart"))
     keep = a.epochs .< first(b.epochs)
-    (; a..., epochs=[a.epochs[keep]; b.epochs], tec=cat(a.tec[:, :, keep], b.tec; dims=3))
+    (; a..., epochs=[a.epochs[keep]; b.epochs], tec=catmaps(a.tec, b.tec, keep), rms=catmaps(a.rms, b.rms, keep))
 end
+catmaps(A, B, keep) = cat(A[:, :, keep], B; dims=3)
+catmaps(::Nothing, ::Nothing, keep) = nothing
 
 function bilinear(I, M, lat, lon)
     lon = mod(lon + 180, 360) - 180
@@ -50,15 +52,25 @@ function bilinear(I, M, lat, lon)
     (1-p)*(1-q)*M[i0,j0] + p*(1-q)*M[i0+1,j0] + (1-p)*q*M[i0,j0+1] + p*q*M[i0+1,j0+1]
 end
 
-# lat, lon in degrees (geocentric)
-function vtec(I, t, lat, lon)
+# maps A[lat, lon, epoch] at t; lat, lon in degrees (geocentric)
+function interpolate(I, A, t, lat, lon)
     I.epochs[1] <= t <= I.epochs[end] || error("$t outside IONEX map epochs $(I.epochs[1])–$(I.epochs[end])")
     k = clamp(searchsortedlast(I.epochs, t), 1, length(I.epochs) - 1)
     w = (t - I.epochs[k]) /ₜ (I.epochs[k+1] - I.epochs[k])
-    e0 = bilinear(I, view(I.tec, :, :, k), lat, lon + 360 * ((t - I.epochs[k]) /ₜ Day))
-    e1 = bilinear(I, view(I.tec, :, :, k+1), lat, lon + 360 * ((t - I.epochs[k+1]) /ₜ Day))
+    e0 = bilinear(I, view(A, :, :, k), lat, lon + 360 * ((t - I.epochs[k]) /ₜ Day))
+    e1 = bilinear(I, view(A, :, :, k+1), lat, lon + 360 * ((t - I.epochs[k+1]) /ₜ Day))
     (1 - w) * e0 + w * e1
 end
+interpolate(I, ::Nothing, t, lat, lon) = nothing
+
+# VTEC (TECU), ± its RMS where the file has RMS maps. RMS is interpolated with the TEC weights:
+# errors at neighbouring nodes of a smooth map are close to fully correlated.
+vtec(I, t, lat, lon) = with_rms(interpolate(I, I.tec, t, lat, lon), interpolate(I, I.rms, t, lat, lon))
+with_rms(v, σ) = v ±ᵤ σ
+with_rms(v, ::Nothing) = v
+
+# below the horizon: NaN of the type a computed RM has
+nan_rm(m::GlobalMap) = with_rms(NaN, isnothing(m.ionex.rms) ? nothing : NaN)
 
 mapping_factor(::SLM, pp, k, site) = norm(pp) / dot(pp, k)
 mapping_factor(::MSLM, pp, k, site) = 1 / sqrt(1 - (6371 / (6371 + 506.7) * sin(0.9782 * acos(dot(k, up(site)))))^2)
