@@ -10,15 +10,6 @@ function ecef(site)
     SVector((N + h) * cos(lat) * cos(lon), (N + h) * cos(lat) * sin(lon), (N * (1 - e2) + h) * sin(lat))
 end
 
-# Bowring's closed form; sub-mm for terrestrial heights
-function geodetic(x)
-    (; a, f) = WGS84
-    e2 = f * (2 - f); b = a * (1 - f); ep2 = (a^2 - b^2) / b^2
-    p = hypot(x[1], x[2]); θ = atan(x[3] * a, p * b)
-    lat = atan(x[3] + ep2 * b * sin(θ)^3, p - e2 * a * cos(θ)^3)
-    (; lat, lon=atan(x[2], x[1]), h=p / cos(lat) - a / sqrt(1 - e2 * sin(lat)^2))
-end
-
 up(site) = SVector(cos(site.lat) * cos(site.lon), cos(site.lat) * sin(site.lon), sin(site.lat))
 
 geocentric_latlon(x) = (; lat=asin(x[3] / norm(x)), lon=atan(x[2], x[1]))
