@@ -21,7 +21,8 @@ function pierce(o, k, r)
     o + (-b + sqrt(b^2 - (dot(o, o) - r^2))) * k
 end
 
-# ICRS direction → Earth-fixed unit vector: precession, nutation, Earth rotation with UT1 ≈ UTC; no polar motion
+# ICRS direction → Earth-fixed unit vector: precession, nutation, Earth rotation with UT1 ≈ UTC;
+# no aberration (≤20″, far below map errors in RM), polar motion or refraction
 source_direction(src::ICRSCoords, t) = r_eci_to_ecef(J2000(), PEF(), julian_day(t)) * cartesian(src).vec
 
 # IGRF field component along -k, i.e. toward the observer, at ECEF position x
