@@ -4,16 +4,17 @@ struct SLM end
 struct MSLM end
 
 """
-    GlobalMap(path; mapping=SLM())
+    GlobalMap(path; mapping)
 
 Thin-shell model from an IONEX global ionosphere map: VTEC bilinearly interpolated at the pierce point,
 maps blended in time after rotating each with the Sun (IONEX recommendation).
+`mapping` (`SLM()` or `MSLM()`) converts VTEC to slant TEC; use the one the map was produced with.
 """
 struct GlobalMap{I, M}
     ionex::I
     mapping::M
 end
-GlobalMap(path::AbstractString; mapping=SLM()) = GlobalMap(read_ionex(path), mapping)
+GlobalMap(path::AbstractString; mapping) = GlobalMap(read_ionex(path), mapping)
 
 function bilinear(I, M, lat, lon)
     lon = mod(lon + 180, 360) - 180

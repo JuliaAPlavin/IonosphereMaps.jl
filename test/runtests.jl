@@ -29,17 +29,18 @@ end
     # independently verified calculator (vs spinifex 2.0 and AIPS TECOR), CODE final GIM 2025-206
     slm = [-1.0456, -1.1890, -1.3138, -1.4600, -1.5775, -1.7246, -1.8365, -2.0016, -2.1344, -2.2655, -2.3375, -2.4113, -2.4826, -2.5611]
     mslm = [-1.0184, -1.1611, -1.2851, -1.4303, -1.5465, -1.6913, -1.8009, -1.9613, -2.0891, -2.2135, -2.2788, -2.3440, -2.4047, -2.4701]
-    @test ionospheric_rm.(Ref(GlobalMap(path)), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS) ≈ slm atol=2e-4   # norm over the 14 scans
+    @test ionospheric_rm.(Ref(GlobalMap(path; mapping=SLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS) ≈ slm atol=2e-4   # norm over the 14 scans
     @test ionospheric_rm.(Ref(GlobalMap(path; mapping=MSLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS) ≈ mslm atol=2e-4
     # circumpolar source, time outside the map epochs
-    @test_throws ErrorException ionospheric_rm(GlobalMap(path), Track.SITE, ICRSCoords(0.0, -1.2), DateTime(2025, 7, 25, 20))
+    @test_throws ErrorException ionospheric_rm(GlobalMap(path; mapping=MSLM()), Track.SITE, ICRSCoords(0.0, -1.2), DateTime(2025, 7, 25, 20))
 end
 
 @testitem "horizon and non-IONEX input" setup=[Track] begin
     using Dates
-    m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"))
+    m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"); mapping=MSLM())
     @test isnan(ionospheric_rm(m, Track.SITE, Track.SRC, DateTime(2025, 7, 25, 1)))    # 3C138 below the horizon
-    @test_throws Exception GlobalMap(@__FILE__)
+    @test_throws Exception GlobalMap(@__FILE__; mapping=MSLM())
+    @test_throws UndefKeywordError GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"))
 end
 
 @testitem "_" begin
