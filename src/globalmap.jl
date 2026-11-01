@@ -10,6 +10,7 @@ struct MSLM end
 Thin-shell model from IONEX global ionosphere maps: VTEC bilinearly interpolated at the pierce point,
 maps blended in time after rotating each with the Sun (IONEX method 3), also across file boundaries.
 `mapping` (`SLM()` or `MSLM()`) converts VTEC to slant TEC; use the one the maps were produced with.
+Pierce points beyond the grid (e.g. past ±87.5° latitude, or outside a regional map) are an error.
 
 `paths` are files of consecutive periods in time order, e.g. the daily files of an observation that
 crosses midnight. They must share the grid, base radius, shell height and mapping function, and each
@@ -44,18 +45,29 @@ end
 catmaps(A, B, keep) = cat(A[:, :, keep], B; dims=3)
 catmaps(::Nothing, ::Nothing, keep) = nothing
 
+# grid cell of x in the range r: x = r[i] + p * step(r), 0 ≤ p ≤ 1
+function gridcell(r, x)
+    f = (x - first(r)) / step(r)
+    0 <= f <= length(r) - 1 || throw(DomainError(x, "outside the IONEX grid $(first(r)) to $(last(r))"))
+    i = min(floor(Int, f), length(r) - 2)
+    (i + 1, f - i)
+end
+
 function bilinear(I, M, lat, lon)
-    lon = mod(lon + 180, 360) - 180
-    fi = (lat - first(I.lats)) / step(I.lats) + 1; fj = (lon - first(I.lons)) / step(I.lons) + 1
-    i0 = clamp(floor(Int, fi), 1, length(I.lats) - 1); j0 = clamp(floor(Int, fj), 1, length(I.lons) - 1)
-    p = fi - i0; q = fj - j0
-    (1-p)*(1-q)*M[i0,j0] + p*(1-q)*M[i0+1,j0] + (1-p)*q*M[i0,j0+1] + p*q*M[i0+1,j0+1]
+    (i, p) = gridcell(I.lats, lat)
+    # a full circle without a repeated end column closes on its first column;
+    # either side of a repeated (e.g. ±180) column interpolates from its own copy
+    closed = length(I.lons) * step(I.lons) ≈ 360
+    lons = range(first(I.lons); step=step(I.lons), length=length(I.lons) + closed)
+    (j, q) = gridcell(lons, first(lons) + mod(lon - first(lons), 360))
+    j1 = mod1(j + 1, length(I.lons))
+    (1-p)*(1-q)*M[i,j] + p*(1-q)*M[i+1,j] + (1-p)*q*M[i,j1] + p*q*M[i+1,j1]
 end
 
 # maps A[lat, lon, epoch] at t; lat, lon in degrees (geocentric)
 function interpolate(I, A, t, lat, lon)
-    I.epochs[1] <= t <= I.epochs[end] || error("$t outside IONEX map epochs $(I.epochs[1])–$(I.epochs[end])")
-    k = clamp(searchsortedlast(I.epochs, t), 1, length(I.epochs) - 1)
+    k = searchsortedlast(I.epochs, t)
+    t == I.epochs[k] && return bilinear(I, view(A, :, :, k), lat, lon)
     w = (t - I.epochs[k]) /ₜ (I.epochs[k+1] - I.epochs[k])
     e0 = bilinear(I, view(A, :, :, k), lat, lon + 360 * ((t - I.epochs[k]) /ₜ Day))
     e1 = bilinear(I, view(A, :, :, k+1), lat, lon + 360 * ((t - I.epochs[k+1]) /ₜ Day))

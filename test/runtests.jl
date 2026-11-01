@@ -32,7 +32,7 @@ end
     @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=SLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS)) ≈ slm atol=2e-4   # norm over the 14 scans
     @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=MSLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS)) ≈ mslm atol=2e-4
     # circumpolar source, time outside the map epochs
-    @test_throws ErrorException ionospheric_rm(GlobalMap(path; mapping=MSLM()), Track.SITE, ICRSCoords(0.0, -1.2), DateTime(2025, 7, 25, 20))
+    @test_throws BoundsError ionospheric_rm(GlobalMap(path; mapping=MSLM()), Track.SITE, ICRSCoords(0.0, -1.2), DateTime(2025, 7, 25, 20))
 end
 
 @testitem "horizon and non-IONEX input" setup=[Track] begin
@@ -74,6 +74,73 @@ end
     @test U.value.(rm) ≈ [-1.045650, -1.843167, -2.561181] atol=3e-4
     @test U.uncertainty.(rm) ≈ [0.105383, 0.106252, 0.136799] atol=3e-5
     @test (@inferred ionospheric_rm(m, Track.SITE, Track.SRC, DateTime(2025, 7, 25, 8))) isa Uncertain.Value
+end
+
+@testitem "grid interpolation: longitude wrap, seam, grid edges, map epochs" begin
+    using Dates
+    using IonosphericRM: vtec
+    t0 = DateTime(2025, 1, 1)
+    f(lat, lon) = 10 + 3cosd(lon) + 2sind(2lon) + lat / 10
+    lats = 10.0:-2.5:-10.0
+    # two maps an hour apart, the second rotated 15° west as if fixed to the Sun
+    ionex(lons; fixlon=identity) = (; epochs=[t0, t0 + Hour(1)], lats, lons, rms=nothing,
+        tec=stack([fixlon(f.(lats, lons')), fixlon(f.(lats, lons' .+ 15))]))
+
+    # a full circle with or without the repeated ±180 column, starting anywhere: the same field
+    grids = ionex.([-180.0:5.0:180.0, -180.0:5.0:175.0, 0.0:5.0:355.0, 0.0:5.0:360.0])
+    pts = [(t, lat, lon) for t in t0 .+ Minute.([0, 20, 60]) for lat in (7.0, -10.0) for lon in (-180, -179, -1, 0, 1, 176, 177.5, 179, 180, 181, 359)]
+    v = [[vtec(I, pt...) for pt in pts] for I in grids]
+    @test all(≈(v[1]; rtol=1e-12), v)
+    @test vtec(grids[1], t0, 5.0, 177.5) ≈ (f(5, 175) + f(5, 180)) / 2
+    @test vtec(grids[2], t0, 5.0, 177.5) ≈ (f(5, 175) + f(5, -180)) / 2
+    @test vtec(grids[1], t0 + Hour(1), 5.0, 2.5) ≈ (f(5, 15) + f(5, 20)) / 2
+
+    # ±180 columns that differ: each side of the seam interpolates from its own column
+    seam = ionex(-180.0:5.0:180.0; fixlon=M -> [M[:, 1:end-1] M[:, end] .+ 10])
+    @test vtec(seam, t0, 5.0, 179.0) ≈ 0.2f(5, 175) + 0.8(f(5, 180) + 10)
+    @test vtec(seam, t0, 5.0, -179.0) ≈ 0.8f(5, -180) + 0.2f(5, -175)
+
+    # regional grid: grid edges included, beyond them an error, not an extrapolation
+    reg = ionex(-10.0:5.0:55.0)
+    @test vtec(reg, t0, -10.0, 55.0) ≈ f(-10, 55)
+    @test vtec(reg, t0, 10.0, -10.0) ≈ f(10, -10)
+    @test_throws DomainError vtec(reg, t0, 0.0, 56.0)
+    @test_throws DomainError vtec(reg, t0, 0.0, -11.0)
+    @test_throws DomainError vtec(reg, t0 + Minute(30), 0.0, 50.0)   # rotated out of the grid in the second map
+    @test_throws DomainError vtec(grids[1], t0, 10.5, 0.0)
+    @test_throws DomainError vtec(grids[1], t0, -12.0, 0.0)
+
+    # map epochs: both ends included, a file with a single map
+    @test vtec(grids[1], t0 + Hour(1), 0.0, 20.0) ≈ f(0, 35)
+    single = (; grids[1]..., epochs=[t0], tec=grids[1].tec[:, :, 1:1])
+    @test vtec(single, t0, 0.0, 20.0) ≈ f(0, 20)
+    @test_throws BoundsError vtec(single, t0 + Minute(1), 0.0, 20.0)
+    @test_throws BoundsError vtec(grids[1], t0 - Minute(1), 0.0, 20.0)
+    @test_throws BoundsError vtec(grids[1], t0 + Minute(61), 0.0, 20.0)
+end
+
+@testitem "grid interpolation: real maps across the ±180 seam" setup=[Track] begin
+    using Dates, Uncertain
+    using IonosphericRM: read_ionex, vtec
+    points = [(0.0, 179.0), (0.0, -179.0), (10.0, 357.5)]
+    # spinifex 2.0 interpolate_ionex (TEC, RMS), with its lookup of the two nodes around a point near ±180 fixed;
+    # UPC's -180 and +180 columns differ, each side of the seam uses its own
+    upc = [
+        DateTime(2025, 7, 25, 6, 0)     => [(51.160000, 3.380000), (51.540000, 3.380000), (7.600000, 3.400000)],
+        DateTime(2025, 7, 25, 6, 7, 30) => [(51.113750, 3.355000), (48.973750, 3.395000), (9.050000, 3.487500)],
+        DateTime(2025, 7, 25, 10, 20)   => [(34.843333, 3.300000), (35.923333, 3.300000), (47.233333, 3.300000)],
+        DateTime(2025, 7, 25, 23, 55)   => [(53.923333, 3.550000), (54.376667, 3.616667), (15.600000, 3.716667)]]
+    cod = [
+        DateTime(2025, 7, 25, 6, 0)     => [(61.040000, 2.020000), (60.660000, 2.180000), (11.400000, 2.000000)],
+        DateTime(2025, 7, 25, 6, 7, 30) => [(60.136562, 2.098750), (59.391562, 2.238750), (12.407813, 2.081250)],
+        DateTime(2025, 7, 25, 23, 55)   => [(60.788750, 1.861250), (60.865417, 1.984583), (11.675000, 2.097917)]]
+    @testset for (file, ref) in ["UPC0OPSRAP_20252060000_01D_15M_GIM_seam.INX.Z" => upc, "COD0OPSFIN_20252060000_01D_01H_GIM_seam.INX.gz" => cod]
+        I = read_ionex(joinpath(Track.DATA, file))
+        v = [vtec(I, t, lat, lon) for (t, _) in ref for (lat, lon) in points]
+        expected = reduce(vcat, last.(ref))
+        @test U.value.(v) ≈ first.(expected) atol=3e-6
+        @test U.uncertainty.(v) ≈ last.(expected) atol=3e-6
+    end
 end
 
 @testitem "gzip, unix compress and plain files read alike" setup=[Track] begin
@@ -118,8 +185,8 @@ end
     @test rm(m, midnight - Millisecond(1)) ≈ rm(m, midnight) atol=1e-7
     @test rm(m, midnight - Hour(1)) == rm(m59, midnight - Hour(1))
     @test rm.(Ref(m), midnight .+ Minute.(0:30:360)) == rm.(Ref(m60), midnight .+ Minute.(0:30:360))
-    @test_throws ErrorException vtec(m.ionex, DateTime(2021, 3, 1, 6, 30), -30.0, 21.0)
-    @test_throws ErrorException vtec(m.ionex, DateTime(2021, 2, 28, 20, 30), -30.0, 21.0)
+    @test_throws BoundsError vtec(m.ionex, DateTime(2021, 3, 1, 6, 30), -30.0, 21.0)
+    @test_throws BoundsError vtec(m.ionex, DateTime(2021, 2, 28, 20, 30), -30.0, 21.0)
 end
 
 @testitem "multi-day maps: EXPONENT records apply per file and per map" setup=[Track] begin
