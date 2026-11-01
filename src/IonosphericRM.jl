@@ -3,7 +3,6 @@ module IonosphericRM
 using Dates
 using LinearAlgebra
 using StaticArrays
-using CodecZlib
 using SkyCoords: ICRSCoords
 using SatelliteToolboxGeomagneticField: igrf
 

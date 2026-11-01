@@ -1,11 +1,12 @@
-openmaybegz(f, path) = endswith(lowercase(path), ".gz") ? open(io -> f(GzipDecompressorStream(io)), path) : open(f, path)
+# gzip also reads unix compress (.Z)
+readlines_decompressed(path) = occursin(r"\.(gz|z)$"i, path) ? readlines(`gzip -dc $path`) : readlines(path)
 headerlabel(l) = strip(l[min(end + 1, 61):end])
 
 parsefloats(s) = parse.(Float64, split(s))
 
 # TEC maps (TECU) as tec[lat, lon, epoch]; epochs in UTC
 function read_ionex(path)
-    lines = openmaybegz(readlines, path)
+    lines = readlines_decompressed(path)
     hdr(lbl) = lines[findfirst(l -> headerlabel(l) == lbl, lines)][1:60]
     # an EXPONENT record (default -1) holds until the next one, which may come inside the data section
     expos = accumulate((e, l) -> headerlabel(l) == "EXPONENT" ? parse(Int, split(l)[1]) : e, lines; init=-1)

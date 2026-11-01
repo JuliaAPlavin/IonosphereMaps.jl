@@ -43,6 +43,15 @@ end
     @test_throws UndefKeywordError GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"))
 end
 
+@testitem "gzip, unix compress and plain files read alike" setup=[Track] begin
+    using IonosphericRM: read_ionex
+    gz, Z = joinpath.(Track.DATA, ["codg0590.21i_crop.gz", "codg0590.21i_crop.Z"])
+    plain = tempname()
+    write(plain, read(`gzip -dc $gz`))
+    @test isequal(read_ionex(Z), read_ionex(gz))
+    @test isequal(read_ionex(plain), read_ionex(gz))
+end
+
 @testitem "multi-day maps: the later file's midnight map, continuous across midnight" setup=[Track] begin
     using Dates, SkyCoords
     using IonosphericRM: vtec
