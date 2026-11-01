@@ -1,0 +1,56 @@
+# RM = K_RM ∫ nₑ B∥ dl  (SI), K_RM = e³ / (8π² ε₀ mₑ² c³)
+const K_RM = 1.602176634e-19^3 / (8π^2 * 8.8541878128e-12 * 9.1093837015e-31^2 * 299792458.0^3)
+
+const WGS84 = (; a=6378137.0, f=1 / 298.257223563)
+
+function ecef(site)
+    (; lat, lon, h) = site
+    e2 = WGS84.f * (2 - WGS84.f)
+    N = WGS84.a / sqrt(1 - e2 * sin(lat)^2)
+    SVector((N + h) * cos(lat) * cos(lon), (N + h) * cos(lat) * sin(lon), (N * (1 - e2) + h) * sin(lat))
+end
+
+# Bowring's closed form; sub-mm for terrestrial heights
+function geodetic(x)
+    (; a, f) = WGS84
+    e2 = f * (2 - f); b = a * (1 - f); ep2 = (a^2 - b^2) / b^2
+    p = hypot(x[1], x[2]); θ = atan(x[3] * a, p * b)
+    lat = atan(x[3] + ep2 * b * sin(θ)^3, p - e2 * a * cos(θ)^3)
+    (; lat, lon=atan(x[2], x[1]), h=p / cos(lat) - a / sqrt(1 - e2 * sin(lat)^2))
+end
+
+up(site) = SVector(cos(site.lat) * cos(site.lon), cos(site.lat) * sin(site.lon), sin(site.lat))
+
+geocentric_latlon(x) = (; lat=asin(x[3] / norm(x)), lon=atan(x[2], x[1]))
+
+# point where the ray o + s·k (s > 0) crosses the sphere |x| = r
+function pierce(o, k, r)
+    b = dot(o, k)
+    o + (-b + sqrt(b^2 - (dot(o, o) - r^2))) * k
+end
+
+julian_date(t) = Dates.value(t - DateTime(2000, 1, 1, 12)) / 86400e3 + 2451545.0
+
+# ICRS direction → ECEF unit vector: first-order precession to date, GMST with UT1 ≈ UTC;
+# nutation/aberration/UT1-UTC neglected (sub-arcmin, ≤1e-4 rad/m² in RM)
+function source_direction(src::ICRSCoords, t)
+    d = julian_date(t) - 2451545.0
+    T = d / 36525
+    m = deg2rad(1.2812323 * T); n = deg2rad(0.5567530 * T)
+    ra = src.ra + m + n * sin(src.ra) * tan(src.dec)
+    dec = src.dec + n * cos(src.ra)
+    h = ra - deg2rad(mod(280.46061837 + 360.98564736629 * d, 360))
+    SVector(cos(dec) * cos(h), cos(dec) * sin(h), sin(dec))
+end
+
+decimal_year(t) = year(t) + (dayofyear(t) - 1 + Dates.value(t - floor(t, Day)) / 86400e3) / daysinyear(t)
+
+# IGRF field component (T) along -k, i.e. toward the observer, at ECEF position x
+function bpar(x, k, t)
+    (; lat, lon) = geocentric_latlon(x)
+    b = igrf(decimal_year(t), norm(x), lat, lon)   # geocentric (north, east, down), nT
+    north = SVector(-sin(lat) * cos(lon), -sin(lat) * sin(lon), cos(lat))
+    east = SVector(-sin(lon), cos(lon), 0.0)
+    down = -SVector(cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat))
+    1e-9 * dot(b[1] * north + b[2] * east + b[3] * down, -k)
+end
