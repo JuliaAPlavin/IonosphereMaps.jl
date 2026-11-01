@@ -88,9 +88,9 @@ nan_rm(m::GlobalMap) = with_rms(NaN, isnothing(m.ionex.rms) ? nothing : NaN)
 mapping_factor(::SLM, pp, k, site) = norm(pp) / dot(pp, k)
 mapping_factor(::MSLM, pp, k, site) = 1 / sqrt(1 - (6371 / (6371 + 506.7) * sin(0.9782 * acos(dot(k, up(site)))))^2)
 
-function slant_tec(m::GlobalMap, o, site, k, t)
+function slant_tec(m::GlobalMap, site, k, t)
     I = m.ionex
-    pp = pierce(o, k, I.radius + I.height)
+    pp = pierce(ecef(site), k, I.radius + I.height)
     (; lat, lon) = geocentric_latlon(pp)
     (; stec=vtec(I, t, rad2deg(lat), rad2deg(lon)) * mapping_factor(m.mapping, pp, k, site), pp)
 end

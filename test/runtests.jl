@@ -33,6 +33,11 @@ end
     @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=MSLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS)) ≈ mslm atol=2e-4
     # circumpolar source, time outside the map epochs
     @test_throws BoundsError ionospheric_rm(GlobalMap(path; mapping=MSLM()), Track.SITE, ICRSCoords(0.0, -1.2), DateTime(2025, 7, 25, 20))
+    # any sky frame: 3C138 in galactic coordinates
+    m = GlobalMap(path; mapping=MSLM())
+    gal, icrs = ionospheric_rm.(Ref(m), Ref(Track.SITE), [convert(GalCoords, Track.SRC), Track.SRC], Track.SCANS[1])
+    @test U.value(gal) ≈ U.value(icrs) rtol=1e-12
+    @test U.uncertainty(gal) ≈ U.uncertainty(icrs) rtol=1e-12
 end
 
 @testitem "horizon and non-IONEX input" setup=[Track] begin
