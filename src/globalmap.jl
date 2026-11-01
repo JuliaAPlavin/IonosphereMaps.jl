@@ -54,11 +54,10 @@ end
 function vtec(I, t, lat, lon)
     I.epochs[1] <= t <= I.epochs[end] || error("$t outside IONEX map epochs $(I.epochs[1])–$(I.epochs[end])")
     k = clamp(searchsortedlast(I.epochs, t), 1, length(I.epochs) - 1)
-    dt0 = Dates.value(t - I.epochs[k]) / 1e3; dt1 = Dates.value(t - I.epochs[k+1]) / 1e3
-    Δ = Dates.value(I.epochs[k+1] - I.epochs[k]) / 1e3
-    e0 = bilinear(I, view(I.tec, :, :, k), lat, lon + dt0 * 360 / 86400)
-    e1 = bilinear(I, view(I.tec, :, :, k+1), lat, lon + dt1 * 360 / 86400)
-    ((Δ - dt0) * e0 + dt0 * e1) / Δ
+    w = (t - I.epochs[k]) /ₜ (I.epochs[k+1] - I.epochs[k])
+    e0 = bilinear(I, view(I.tec, :, :, k), lat, lon + 360 * ((t - I.epochs[k]) /ₜ Day))
+    e1 = bilinear(I, view(I.tec, :, :, k+1), lat, lon + 360 * ((t - I.epochs[k+1]) /ₜ Day))
+    (1 - w) * e0 + w * e1
 end
 
 mapping_factor(::SLM, pp, k, site) = norm(pp) / dot(pp, k)

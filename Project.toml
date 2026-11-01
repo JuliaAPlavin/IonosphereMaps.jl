@@ -4,6 +4,7 @@ authors = ["Alexander Plavin <alexander@plav.in>"]
 version = "0.1.0"
 
 [deps]
+DateFormats = "44557152-fe0a-4de1-8405-416d90313ce6"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 SatelliteToolboxGeomagneticField = "9fc549ba-b5d7-49a2-b268-8171e5fb6e89"
@@ -11,6 +12,7 @@ SkyCoords = "fc659fc5-75a3-5475-a2ea-3da92c065361"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
+DateFormats = "0.1.20"
 Dates = "1"
 LinearAlgebra = "1"
 SatelliteToolboxGeomagneticField = "2"

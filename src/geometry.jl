@@ -20,12 +20,10 @@ function pierce(o, k, r)
     o + (-b + sqrt(b^2 - (dot(o, o) - r^2))) * k
 end
 
-julian_date(t) = Dates.value(t - DateTime(2000, 1, 1, 12)) / 86400e3 + 2451545.0
-
 # ICRS direction → ECEF unit vector: first-order precession to date, GMST with UT1 ≈ UTC;
 # nutation/aberration/UT1-UTC neglected (sub-arcmin, ≤1e-4 rad/m² in RM)
 function source_direction(src::ICRSCoords, t)
-    d = julian_date(t) - 2451545.0
+    d = (t - DateTime(2000, 1, 1, 12)) /ₜ Day   # days since J2000.0
     T = d / 36525
     m = deg2rad(1.2812323 * T); n = deg2rad(0.5567530 * T)
     ra = src.ra + m + n * sin(src.ra) * tan(src.dec)
@@ -34,12 +32,10 @@ function source_direction(src::ICRSCoords, t)
     SVector(cos(dec) * cos(h), cos(dec) * sin(h), sin(dec))
 end
 
-decimal_year(t) = year(t) + (dayofyear(t) - 1 + Dates.value(t - floor(t, Day)) / 86400e3) / daysinyear(t)
-
 # IGRF field component (T) along -k, i.e. toward the observer, at ECEF position x
 function bpar(x, k, t)
     (; lat, lon) = geocentric_latlon(x)
-    b = igrf(decimal_year(t), norm(x), lat, lon)   # geocentric (north, east, down), nT
+    b = igrf(yeardecimal(t), norm(x), lat, lon)   # geocentric (north, east, down), nT
     north = SVector(-sin(lat) * cos(lon), -sin(lat) * sin(lon), cos(lat))
     east = SVector(-sin(lon), cos(lon), 0.0)
     down = -SVector(cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat))
