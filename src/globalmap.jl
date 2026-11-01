@@ -13,14 +13,10 @@ maps blended in time after rotating each with the Sun (IONEX method 3), also acr
 Pierce points beyond the grid (e.g. past ±87.5° latitude, or outside a regional map) are an error.
 A map node without a value (9999 in IONEX) makes interpolation through it NaN.
 
-`paths` are files of consecutive periods in time order, e.g. the daily files of an observation that
-crosses midnight. They must share the grid, base radius, shell height and mapping function, and each
-must start no later than one map interval after the previous one ends.
-Where consecutive files overlap — normally the midnight map that closes one daily file and opens the
-next, from two separate daily solutions — the later file's maps are used. IONEX assigns a time to the
-interval `Tᵢ ≤ t < Tᵢ₊₁`, so a day file covers `[00:00, 24:00)` and its 24:00 map only closes the last
-interval; the epoch itself belongs to the next day. AIPS TECOR (NFILES > 1) and spinifex
-(`remove_midnight_jumps`) treat the shared epoch the same way, which keeps TEC continuous in time.
+`paths` are files of consecutive periods in time order, e.g. the daily files of an observation crossing
+midnight. They must share grid, base radius, shell height and mapping function, with gaps of at most one map interval.
+Where files overlap (normally the midnight map of two daily solutions), the later file's maps are used:
+IONEX maps cover `Tᵢ ≤ t < Tᵢ₊₁`, so a day's 24:00 map only closes its last interval. This keeps TEC continuous.
 """
 struct GlobalMap{I, M}
     ionex::I

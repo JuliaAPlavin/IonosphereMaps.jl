@@ -9,13 +9,14 @@ end
 
 # map block starting at line `i` as M[lat, lon], scaled by the EXPONENT in force; 9999 (no value) as NaN
 function readmap(lines, i, expos, lats, lons)
-    stop = findnext(l -> headerlabel(l) == replace(headerlabel(lines[i]), "START" => "END"), lines, i)
+    endlabel = replace(headerlabel(lines[i]), "START" => "END")
+    stop = findnext(l -> headerlabel(l) == endlabel, lines, i)
     rows = filter(j -> headerlabel(lines[j]) == "LAT/LON1/LON2/DLON/H", i:stop)
     @assert length(rows) == length(lats)
     stack(zip(rows, lats); dims=1) do (r, lat)
         rlat, lon1, lon2, dlon = fixedwidth(Float64, lines[r][3:26], 6)
         @assert rlat ≈ lat && lon1:dlon:lon2 == lons
-        vals = reduce(vcat, map(l -> fixedwidth(Int, l, 5), lines[r+1:r+cld(length(lons), 16)]))
+        vals = collect(Iterators.flatmap(l -> fixedwidth(Int, l, 5), lines[r+1:r+cld(length(lons), 16)]))
         @assert length(vals) == length(lons)
         @. ifelse(vals == 9999, NaN, vals * 10.0^expos[r])
     end
