@@ -27,20 +27,21 @@ GlobalMap(path::AbstractString; mapping) = GlobalMap((path,); mapping)
 
 # `b`'s maps from its first epoch on replace `a`'s
 function append_ionex(a, b)
-    for k in (:lats, :lons, :radius, :height, :mapping)
-        a[k] == b[k] || throw(ArgumentError("IONEX files differ in $k: $(a[k]) vs $(b[k])"))
+    for (k, x, y) in [(:lat, axiskeys(a.tec, :lat), axiskeys(b.tec, :lat)), (:lon, axiskeys(a.tec, :lon), axiskeys(b.tec, :lon)),
+                      (:radius, a.radius, b.radius), (:height, a.height, b.height), (:mapping, a.mapping, b.mapping)]
+        x == y || throw(ArgumentError("IONEX files differ in $k: $x vs $y"))
     end
-    first(a.epochs) < first(b.epochs) && last(a.epochs) < last(b.epochs) ||
-        throw(ArgumentError("IONEX files not in time order: $(first(a.epochs))–$(last(a.epochs)) followed by $(first(b.epochs))–$(last(b.epochs))"))
+    ea, eb = axiskeys(a.tec, :epoch), axiskeys(b.tec, :epoch)
+    first(ea) < first(eb) && last(ea) < last(eb) ||
+        throw(ArgumentError("IONEX files not in time order: $(first(ea))–$(last(ea)) followed by $(first(eb))–$(last(eb))"))
     # interpolating across the junction is no coarser than within either file
-    spacing = maximum(I -> maximum(diff(I.epochs); init=Millisecond(0)), (a, b))
-    first(b.epochs) - last(a.epochs) <= spacing ||
-        throw(ArgumentError("gap between IONEX files: $(last(a.epochs)) to $(first(b.epochs)), maps are $spacing apart"))
-    keep = a.epochs .< first(b.epochs)
-    (; a..., epochs=[a.epochs[keep]; b.epochs], tec=catmaps(a.tec, b.tec, keep), rms=catmaps(a.rms, b.rms, keep))
+    spacing = maximum(e -> maximum(diff(e); init=Millisecond(0)), (ea, eb))
+    first(eb) - last(ea) <= spacing ||
+        throw(ArgumentError("gap between IONEX files: $(last(ea)) to $(first(eb)), maps are $spacing apart"))
+    (; a..., tec=catmaps(a.tec, b.tec), rms=catmaps(a.rms, b.rms))
 end
-catmaps(A, B, keep) = cat(A[:, :, keep], B; dims=3)
-catmaps(::Nothing, ::Nothing, keep) = nothing
+catmaps(A, B) = cat(A(epoch=<(first(axiskeys(B, :epoch)))), B; dims=3)
+catmaps(::Nothing, ::Nothing) = nothing
 
 # grid cell of x in the range r: x = r[i] + p * step(r), 0 ≤ p ≤ 1
 function gridcell(r, x)
@@ -50,31 +51,34 @@ function gridcell(r, x)
     (i + 1, f - i)
 end
 
-function bilinear(I, M, lat, lon)
-    (i, p) = gridcell(I.lats, lat)
+# map M[lat, lon] at lat, lon
+function bilinear(M, lat, lon)
+    (i, p) = gridcell(axiskeys(M, :lat), lat)
     # a full circle without a repeated end column closes on its first column;
     # either side of a repeated (e.g. ±180) column interpolates from its own copy
-    closed = length(I.lons) * step(I.lons) ≈ 360
-    lons = range(first(I.lons); step=step(I.lons), length=length(I.lons) + closed)
+    mlons = axiskeys(M, :lon)
+    closed = length(mlons) * step(mlons) ≈ 360
+    lons = range(first(mlons); step=step(mlons), length=length(mlons) + closed)
     (j, q) = gridcell(lons, first(lons) + mod(lon - first(lons), 360))
-    j1 = mod1(j + 1, length(I.lons))
+    j1 = mod1(j + 1, length(mlons))
     (1-p)*(1-q)*M[i,j] + p*(1-q)*M[i+1,j] + (1-p)*q*M[i,j1] + p*q*M[i+1,j1]
 end
 
 # maps A[lat, lon, epoch] at t; lat, lon in degrees (geocentric)
-function interpolate(I, A, t, lat, lon)
-    k = searchsortedlast(I.epochs, t)
-    t == I.epochs[k] && return bilinear(I, view(A, :, :, k), lat, lon)
-    w = (t - I.epochs[k]) /ₜ (I.epochs[k+1] - I.epochs[k])
-    e0 = bilinear(I, view(A, :, :, k), lat, lon + 360 * ((t - I.epochs[k]) /ₜ Day))
-    e1 = bilinear(I, view(A, :, :, k+1), lat, lon + 360 * ((t - I.epochs[k+1]) /ₜ Day))
+function interpolate(A, t, lat, lon)
+    epochs = axiskeys(A, :epoch)
+    k = searchsortedlast(epochs, t)
+    t == epochs[k] && return bilinear(view(A, :, :, k), lat, lon)
+    w = (t - epochs[k]) /ₜ (epochs[k+1] - epochs[k])
+    e0 = bilinear(view(A, :, :, k), lat, lon + 360 * ((t - epochs[k]) /ₜ Day))
+    e1 = bilinear(view(A, :, :, k+1), lat, lon + 360 * ((t - epochs[k+1]) /ₜ Day))
     (1 - w) * e0 + w * e1
 end
-interpolate(I, ::Nothing, t, lat, lon) = nothing
+interpolate(::Nothing, t, lat, lon) = nothing
 
 # VTEC (TECU), ± its RMS where the file has RMS maps. RMS is interpolated with the TEC weights:
 # errors at neighbouring nodes of a smooth map are close to fully correlated.
-vtec(I, t, lat, lon) = with_rms(interpolate(I, I.tec, t, lat, lon), interpolate(I, I.rms, t, lat, lon))
+vtec(I, t, lat, lon) = with_rms(interpolate(I.tec, t, lat, lon), interpolate(I.rms, t, lat, lon))
 with_rms(v, σ) = v ±ᵤ σ
 with_rms(v, ::Nothing) = v
 

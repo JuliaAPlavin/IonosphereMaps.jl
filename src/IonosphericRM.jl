@@ -1,6 +1,7 @@
 module IonosphericRM
 
 using Dates
+using AxisKeys: KeyedArray, axiskeys
 using DateFormats: /ₜ, julian_day, yeardecimal
 using LinearAlgebra
 using StaticArrays

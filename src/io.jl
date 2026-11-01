@@ -22,7 +22,7 @@ function readmap(lines, i, expos, lats, lons)
     end
 end
 
-# TEC maps (TECU) as tec[lat, lon, epoch], and their RMS maps (or `nothing`) as rms; epochs in UTC
+# TEC maps (TECU) as tec[lat, lon, epoch] with degree and UTC keys, and their RMS maps (or `nothing`) as rms
 function read_ionex(path)
     lines = readlines_decompressed(path)
     hdr(lbl) = lines[findfirst(l -> headerlabel(l) == lbl, lines)][1:60]
@@ -43,8 +43,9 @@ function read_ionex(path)
     # RMS maps pair with TEC maps by index
     mapindex(i) = parse(Int, lines[i][1:6])
     @assert isempty(rmsstarts) || map(mapindex, rmsstarts) == map(mapindex, starts)
-    (; epochs, lats, lons, tec=stack(map(i -> readmap(lines, i, expos, lats, lons), starts)),
-       rms=isempty(rmsstarts) ? nothing : stack(map(i -> readmap(lines, i, expos, lats, lons), rmsstarts)),
+    keyed(M) = KeyedArray(M; lat=lats, lon=lons, epoch=epochs)
+    (; tec=keyed(stack(map(i -> readmap(lines, i, expos, lats, lons), starts))),
+       rms=isempty(rmsstarts) ? nothing : keyed(stack(map(i -> readmap(lines, i, expos, lats, lons), rmsstarts))),
        height=1e3 * fixedwidth(Float64, hdr("HGT1 / HGT2 / DHGT")[3:20], 6)[1], radius=1e3 * parse(Float64, hdr("BASE RADIUS")[1:8]),
        mapping=strip(hdr("MAPPING FUNCTION")))
 end

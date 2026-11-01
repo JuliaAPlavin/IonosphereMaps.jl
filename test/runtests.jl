@@ -90,14 +90,14 @@ end
 end
 
 @testitem "grid interpolation: longitude wrap, seam, grid edges, map epochs" begin
-    using Dates
+    using Dates, AxisKeys
     using IonosphericRM: vtec
     t0 = DateTime(2025, 1, 1)
     f(lat, lon) = 10 + 3cosd(lon) + 2sind(2lon) + lat / 10
     lats = 10.0:-2.5:-10.0
     # two maps an hour apart, the second rotated 15° west as if fixed to the Sun
-    ionex(lons; fixlon=identity) = (; epochs=[t0, t0 + Hour(1)], lats, lons, rms=nothing,
-        tec=stack([fixlon(f.(lats, lons')), fixlon(f.(lats, lons' .+ 15))]))
+    ionex(lons; fixlon=identity) = (; rms=nothing,
+        tec=KeyedArray(stack([fixlon(f.(lats, lons')), fixlon(f.(lats, lons' .+ 15))]); lat=lats, lon=lons, epoch=[t0, t0 + Hour(1)]))
 
     # a full circle with or without the repeated ±180 column, starting anywhere: the same field
     grids = ionex.([-180.0:5.0:180.0, -180.0:5.0:175.0, 0.0:5.0:355.0, 0.0:5.0:360.0])
@@ -125,7 +125,7 @@ end
 
     # map epochs: both ends included, a file with a single map
     @test vtec(grids[1], t0 + Hour(1), 0.0, 20.0) ≈ f(0, 35)
-    single = (; grids[1]..., epochs=[t0], tec=grids[1].tec[:, :, 1:1])
+    single = (; grids[1]..., tec=grids[1].tec[:, :, 1:1])
     @test vtec(single, t0, 0.0, 20.0) ≈ f(0, 20)
     @test_throws BoundsError vtec(single, t0 + Minute(1), 0.0, 20.0)
     @test_throws BoundsError vtec(grids[1], t0 - Minute(1), 0.0, 20.0)
@@ -166,13 +166,13 @@ end
 end
 
 @testitem "multi-day maps: the later file's midnight map, continuous across midnight" setup=[Track] begin
-    using Dates, SkyCoords
+    using Dates, SkyCoords, AxisKeys
     using IonosphericRM: vtec
     # CODE final GIMs for 2021-02-28 (21–24 h) and 2021-03-01 (0–6 h), cropped; both hold a 03-01 00:00 map
     day59, day60 = joinpath.(Track.DATA, ["codg0590.21i_crop.gz", "codg0600.21i_crop.gz"])
     m59 = GlobalMap(day59; mapping=MSLM()); m60 = GlobalMap(day60; mapping=MSLM())
     m = GlobalMap([day59, day60]; mapping=MSLM())
-    @test m.ionex.epochs == DateTime(2021, 2, 28, 21):Hour(1):DateTime(2021, 3, 1, 6)
+    @test axiskeys(m.ionex.tec, :epoch) == DateTime(2021, 2, 28, 21):Hour(1):DateTime(2021, 3, 1, 6)
     @test m.ionex.tec == cat(m59.ionex.tec[:, :, 1:3], m60.ionex.tec; dims=3)
     @test m59.ionex.tec[:, :, end] != m60.ionex.tec[:, :, 1]   # two solutions of the same epoch
     @test GlobalMap((day59, day60); mapping=MSLM()).ionex == m.ionex
@@ -203,10 +203,11 @@ end
 end
 
 @testitem "multi-day maps: EXPONENT records apply per file and per map" setup=[Track] begin
+    using AxisKeys
     # the 03-01 file rewritten at exponent -2, stated in a record inside each map (header still -1)
     day59, day60, day60e = joinpath.(Track.DATA, ["codg0590.21i_crop.gz", "codg0600.21i_crop.gz", "codg0600.21i_crop_exp2.gz"])
     a = GlobalMap([day59, day60]; mapping=MSLM()).ionex; b = GlobalMap([day59, day60e]; mapping=MSLM()).ionex
-    @test b.epochs == a.epochs
+    @test axiskeys(b.tec) == axiskeys(a.tec)
     @test b.tec ≈ a.tec rtol=1e-14
 end
 
@@ -250,7 +251,7 @@ end
 end
 
 @testitem "multi-day maps: incompatible or non-consecutive files" setup=[Track] begin
-    using Dates
+    using Dates, AxisKeys
     using IonosphericRM: read_ionex, append_ionex
     day59, day60 = joinpath.(Track.DATA, ["codg0590.21i_crop.gz", "codg0600.21i_crop.gz"])
     @test_throws ArgumentError GlobalMap([day60, day59]; mapping=MSLM())
@@ -258,18 +259,21 @@ end
     @test_throws ArgumentError GlobalMap([day59, joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz")]; mapping=MSLM())
 
     a, b = read_ionex.([day59, day60])
-    @testset for (k, v) in [:lats => -10.0:-2.5:-42.5, :lons => -5.0:5.0:55.0, :radius => 6371.2e3, :height => 400e3, :mapping => "COSZ"]
-        @test_throws ArgumentError append_ionex(a, (; b..., k => v))
+    rekey(A; kw...) = KeyedArray(AxisKeys.keyless_unname(A); named_axiskeys(A)..., kw...)
+    @testset for b′ in [(; b..., tec=rekey(b.tec; lat=-12.5:-2.5:-47.5)), (; b..., tec=rekey(b.tec; lon=-5.0:5.0:60.0)),
+                        (; b..., radius=6371.2e3), (; b..., height=400e3), (; b..., mapping="COSZ")]
+        @test_throws ArgumentError append_ionex(a, b′)
     end
-    # a one-interval gap interpolates like any map interval; a longer one does not
     # RMS maps join like TEC maps, and only with RMS maps
     @test append_ionex((; a..., rms=a.tec), (; b..., rms=2b.tec)).rms == cat(a.tec[:, :, 1:3], 2b.tec; dims=3)
     @test_throws MethodError append_ionex(a, (; b..., rms=b.tec))
-    @test append_ionex(a, (; b..., epochs=b.epochs .+ Hour(1))).epochs == DateTime(2021, 2, 28, 21):Hour(1):DateTime(2021, 3, 1, 7)
-    @test_throws ArgumentError append_ionex(a, (; b..., epochs=b.epochs .+ Hour(2)))
+    # a one-interval gap interpolates like any map interval; a longer one does not
+    shifted(I, Δ) = (; I..., tec=rekey(I.tec; epoch=axiskeys(I.tec, :epoch) .+ Δ))
+    @test axiskeys(append_ionex(a, shifted(b, Hour(1))).tec, :epoch) == DateTime(2021, 2, 28, 21):Hour(1):DateTime(2021, 3, 1, 7)
+    @test_throws ArgumentError append_ionex(a, shifted(b, Hour(2)))
     # a wider overlap: the later file from its first epoch on
-    let c = append_ionex(a, (; b..., epochs=b.epochs .- Hour(2)))
-        @test c.epochs == DateTime(2021, 2, 28, 21):Hour(1):DateTime(2021, 3, 1, 4)
+    let b = shifted(b, -Hour(2)), c = append_ionex(a, b)
+        @test axiskeys(c.tec, :epoch) == DateTime(2021, 2, 28, 21):Hour(1):DateTime(2021, 3, 1, 4)
         @test c.tec == cat(a.tec[:, :, 1:1], b.tec; dims=3)
     end
 end

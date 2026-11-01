@@ -4,6 +4,7 @@ authors = ["Alexander Plavin <alexander@plav.in>"]
 version = "0.1.0"
 
 [deps]
+AxisKeys = "94b1ba4f-4ee9-5380-92f1-94cde586c3c5"
 DateFormats = "44557152-fe0a-4de1-8405-416d90313ce6"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -14,6 +15,7 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Uncertain = "b33f403f-199b-472b-b9d0-1cd2092892d0"
 
 [compat]
+AxisKeys = "0.2.17"
 DateFormats = "0.1.20"
 Dates = "1"
 LinearAlgebra = "1"
