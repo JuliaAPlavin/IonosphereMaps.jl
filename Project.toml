@@ -13,6 +13,7 @@ SatelliteToolboxTransformations = "6b019ec1-7a1e-4f04-96c7-a9db1ca5514d"
 SkyCoords = "fc659fc5-75a3-5475-a2ea-3da92c065361"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Uncertain = "b33f403f-199b-472b-b9d0-1cd2092892d0"
+Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [compat]
 AxisKeys = "0.2.17"
@@ -24,4 +25,5 @@ SatelliteToolboxTransformations = "1.3"
 SkyCoords = "1"
 StaticArrays = "1"
 Uncertain = "0.1.22"
+Unitful = "1.29"
 julia = "1.10"

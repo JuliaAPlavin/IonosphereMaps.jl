@@ -3,20 +3,20 @@ using TestItemRunner
 @run_package_tests
 
 @testmodule Track begin
-    using Dates, SkyCoords
+    using Dates, SkyCoords, Unitful
     # MeerKAT array centre and 3C138 (J2000); MeerKAT 2025-07-25 scan mid-times (UTC)
     const DATA = joinpath(@__DIR__, "data")
-    const SITE = (; lat=deg2rad(-30.71292), lon=deg2rad(21.44380), h=1050.0)
+    const SITE = (; lat=-30.71292u"°", lon=21.44380u"°", h=1050.0u"m")
     const SRC = ICRSCoords(deg2rad(15 * (5 + 21/60 + 9.886/3600)), deg2rad(16 + 38/60 + 22.05/3600))
     const SCANS = DateTime(2025, 7, 25) .+ Minute.([366, 386, 403, 424, 441, 462, 479, 500, 517, 537, 555, 574, 593, 612])
 end
 
 @testitem "constants and geometry" setup=[Track] begin
     using IonosphericRM: K_RM, ecef, up, pierce, source_direction
-    using LinearAlgebra, Dates, SkyCoords
-    @test K_RM ≈ 2.6312e-13 rtol=1e-4
+    using LinearAlgebra, Dates, SkyCoords, Unitful
+    @test K_RM * 1u"m^-2" * 1u"T" ≈ 2.6312e-13u"rad/m^2" rtol=1e-4
     o = ecef(Track.SITE)
-    @test pierce(o, normalize(o), 6821e3) ≈ 6821e3 * normalize(o)
+    @test pierce(o, normalize(o), 6821u"km") ≈ 6821u"km" * normalize(o)
     # 3C138 elevation, astropy (via spinifex) reference: 37.08263° at 06:06, 30.659° (ALBUS) at 10:12
     el(t) = rad2deg(asin(dot(source_direction(Track.SRC, t), up(Track.SITE))))
     @test el(Track.SCANS[1]) ≈ 37.0826 atol=0.01
@@ -32,13 +32,13 @@ end
 end
 
 @testitem "global map: verified reference values" setup=[Track] begin
-    using Dates, SkyCoords, Uncertain
+    using Dates, SkyCoords, Uncertain, Unitful
     path = joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz")
     # independently verified calculator (vs spinifex 2.0 and AIPS TECOR), CODE final GIM 2025-206
-    slm = [-1.0456, -1.1890, -1.3138, -1.4600, -1.5775, -1.7246, -1.8365, -2.0016, -2.1344, -2.2655, -2.3375, -2.4113, -2.4826, -2.5611]
-    mslm = [-1.0184, -1.1611, -1.2851, -1.4303, -1.5465, -1.6913, -1.8009, -1.9613, -2.0891, -2.2135, -2.2788, -2.3440, -2.4047, -2.4701]
-    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=SLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS)) ≈ slm atol=3e-4   # norm over the 14 scans; references to 1e-4, sky direction 7″ off ours
-    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=MSLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS)) ≈ mslm atol=3e-4
+    slm = [-1.0456, -1.1890, -1.3138, -1.4600, -1.5775, -1.7246, -1.8365, -2.0016, -2.1344, -2.2655, -2.3375, -2.4113, -2.4826, -2.5611]u"rad/m^2"
+    mslm = [-1.0184, -1.1611, -1.2851, -1.4303, -1.5465, -1.6913, -1.8009, -1.9613, -2.0891, -2.2135, -2.2788, -2.3440, -2.4047, -2.4701]u"rad/m^2"
+    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=SLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS)) ≈ slm atol=3e-4u"rad/m^2"   # norm over the 14 scans; references to 1e-4, sky direction 7″ off ours
+    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=MSLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS)) ≈ mslm atol=3e-4u"rad/m^2"
     # circumpolar source, time outside the map epochs
     @test_throws BoundsError ionospheric_rm(GlobalMap(path; mapping=MSLM()), Track.SITE, ICRSCoords(0.0, -1.2), DateTime(2025, 7, 25, 20))
     # any sky frame: 3C138 in galactic coordinates
@@ -46,6 +46,10 @@ end
     gal, icrs = ionospheric_rm.(Ref(m), Ref(Track.SITE), [convert(GalCoords, Track.SRC), Track.SRC], Track.SCANS[1])
     @test U.value(gal) ≈ U.value(icrs) rtol=1e-12
     @test U.uncertainty(gal) ≈ U.uncertainty(icrs) rtol=1e-12
+    # site latitude and longitude as plain radians or as Unitful angles; height needs its unit
+    plain = (; lat=deg2rad(-30.71292), lon=deg2rad(21.44380), h=1050.0u"m")
+    @test U.value(ionospheric_rm(m, plain, Track.SRC, Track.SCANS[1])) ≈ U.value(icrs) rtol=1e-12
+    @test_throws Unitful.DimensionError ionospheric_rm(m, (; Track.SITE..., h=1050.0), Track.SRC, Track.SCANS[1])
 end
 
 @testitem "horizon and non-IONEX input" setup=[Track] begin
@@ -58,7 +62,7 @@ end
 end
 
 @testitem "RMS maps: VTEC and RM uncertainties" setup=[Track] begin
-    using Dates, Uncertain
+    using Dates, Uncertain, Unitful
     using IonosphericRM: read_ionex, vtec
     points = [(-23.98, 24.26), (-39.17, 26.65), (-30.85, 21.34), (-25.0, 40.0)]
     # spinifex 2.0 interpolate_ionex: (TEC, RMS) in TECU, Earth rotation on, UQRG RMS correction off
@@ -84,8 +88,8 @@ end
     # rescaled from its rounded constant 2.62e-6 to K_RM
     m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"); mapping=SLM())
     rm = [ionospheric_rm(m, Track.SITE, Track.SRC, t) for t in DateTime(2025, 7, 25) .+ Minute.([366, 480, 612])]
-    @test U.value.(rm) ≈ [-1.045650, -1.843167, -2.561181] atol=3e-4
-    @test U.uncertainty.(rm) ≈ [0.105383, 0.106252, 0.136799] atol=3e-5
+    @test U.value.(rm) ≈ [-1.045650, -1.843167, -2.561181]u"rad/m^2" atol=3e-4u"rad/m^2"
+    @test U.uncertainty.(rm) ≈ [0.105383, 0.106252, 0.136799]u"rad/m^2" atol=3e-5u"rad/m^2"
     @test (@inferred ionospheric_rm(m, Track.SITE, Track.SRC, DateTime(2025, 7, 25, 8))) isa Uncertain.Value
 end
 
@@ -166,7 +170,7 @@ end
 end
 
 @testitem "multi-day maps: the later file's midnight map, continuous across midnight" setup=[Track] begin
-    using Dates, SkyCoords, AxisKeys
+    using Dates, SkyCoords, AxisKeys, Unitful
     using IonosphericRM: vtec
     # CODE final GIMs for 2021-02-28 (21–24 h) and 2021-03-01 (0–6 h), cropped; both hold a 03-01 00:00 map
     day59, day60 = joinpath.(Track.DATA, ["codg0590.21i_crop.gz", "codg0600.21i_crop.gz"])
@@ -194,8 +198,8 @@ end
     src = ICRSCoords(deg2rad(15 * (13 + 31/60 + 8.288/3600)), deg2rad(30 + 30/60 + 32.96/3600))
     rm(model, t) = ionospheric_rm(model, Track.SITE, src, t)
     midnight = DateTime(2021, 3, 1)
-    @test [rm(m59, midnight), rm(m60, midnight)] ≈ [-0.4833, -0.4795] atol=1e-4
-    @test rm(m, midnight - Millisecond(1)) ≈ rm(m, midnight) atol=1e-7
+    @test [rm(m59, midnight), rm(m60, midnight)] ≈ [-0.4833, -0.4795]u"rad/m^2" atol=1e-4u"rad/m^2"
+    @test rm(m, midnight - Millisecond(1)) ≈ rm(m, midnight) atol=1e-7u"rad/m^2"
     @test rm(m, midnight - Hour(1)) == rm(m59, midnight - Hour(1))
     @test rm.(Ref(m), midnight .+ Minute.(0:30:360)) == rm.(Ref(m60), midnight .+ Minute.(0:30:360))
     @test_throws BoundsError vtec(m.ionex, DateTime(2021, 3, 1, 6, 30), -30.0, 21.0)
@@ -251,7 +255,7 @@ end
 end
 
 @testitem "multi-day maps: incompatible or non-consecutive files" setup=[Track] begin
-    using Dates, AxisKeys
+    using Dates, AxisKeys, Unitful
     using IonosphericRM: read_ionex, append_ionex
     day59, day60 = joinpath.(Track.DATA, ["codg0590.21i_crop.gz", "codg0600.21i_crop.gz"])
     @test_throws ArgumentError GlobalMap([day60, day59]; mapping=MSLM())
@@ -261,7 +265,7 @@ end
     a, b = read_ionex.([day59, day60])
     rekey(A; kw...) = KeyedArray(AxisKeys.keyless_unname(A); named_axiskeys(A)..., kw...)
     @testset for b′ in [(; b..., tec=rekey(b.tec; lat=-12.5:-2.5:-47.5)), (; b..., tec=rekey(b.tec; lon=-5.0:5.0:60.0)),
-                        (; b..., radius=6371.2e3), (; b..., height=400e3), (; b..., mapping="COSZ")]
+                        (; b..., radius=6371.2u"km"), (; b..., height=400u"km"), (; b..., mapping="COSZ")]
         @test_throws ArgumentError append_ionex(a, b′)
     end
     # RMS maps join like TEC maps, and only with RMS maps

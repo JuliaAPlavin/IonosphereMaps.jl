@@ -46,6 +46,6 @@ function read_ionex(path)
     keyed(M) = KeyedArray(M; lat=lats, lon=lons, epoch=epochs)
     (; tec=keyed(stack(map(i -> readmap(lines, i, expos, lats, lons), starts))),
        rms=isempty(rmsstarts) ? nothing : keyed(stack(map(i -> readmap(lines, i, expos, lats, lons), rmsstarts))),
-       height=1e3 * fixedwidth(Float64, hdr("HGT1 / HGT2 / DHGT")[3:20], 6)[1], radius=1e3 * parse(Float64, hdr("BASE RADIUS")[1:8]),
+       height=fixedwidth(Float64, hdr("HGT1 / HGT2 / DHGT")[3:20], 6)[1] * u"km", radius=parse(Float64, hdr("BASE RADIUS")[1:8]) * u"km",
        mapping=strip(hdr("MAPPING FUNCTION")))
 end

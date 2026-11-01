@@ -83,7 +83,7 @@ with_rms(v, σ) = v ±ᵤ σ
 with_rms(v, ::Nothing) = v
 
 # below the horizon: NaN of the type a computed RM has
-nan_rm(m::GlobalMap) = with_rms(NaN, isnothing(m.ionex.rms) ? nothing : NaN)
+nan_rm(m::GlobalMap) = with_rms(NaN, isnothing(m.ionex.rms) ? nothing : NaN) * u"rad/m^2"
 
 mapping_factor(::SLM, pp, k, site) = norm(pp) / dot(pp, k)
 mapping_factor(::MSLM, pp, k, site) = 1 / sqrt(1 - (6371 / (6371 + 506.7) * sin(0.9782 * acos(dot(k, up(site)))))^2)
