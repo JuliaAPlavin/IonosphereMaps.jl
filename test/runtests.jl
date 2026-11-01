@@ -3,12 +3,13 @@ using TestItemRunner
 @run_package_tests
 
 @testmodule Track begin
-    using Dates, SkyCoords, Unitful
+    using Dates, SkyCoords, Unitful, IonosphericRM
     # MeerKAT array centre and 3C138 (J2000); MeerKAT 2025-07-25 scan mid-times (UTC)
     const DATA = joinpath(@__DIR__, "data")
     const SITE = (; lat=-30.71292u"°", lon=21.44380u"°", h=1050.0u"m")
     const SRC = ICRSCoords(deg2rad(15 * (5 + 21/60 + 9.886/3600)), deg2rad(16 + 38/60 + 22.05/3600))
     const SCANS = DateTime(2025, 7, 25) .+ Minute.([366, 386, 403, 424, 441, 462, 479, 500, 517, 537, 555, 574, 593, 612])
+    const LOS = LineOfSight(SITE, SRC)
 end
 
 @testitem "constants and geometry" setup=[Track] begin
@@ -37,26 +38,32 @@ end
     # independently verified calculator (vs spinifex 2.0 and AIPS TECOR), CODE final GIM 2025-206
     slm = [-1.0456, -1.1890, -1.3138, -1.4600, -1.5775, -1.7246, -1.8365, -2.0016, -2.1344, -2.2655, -2.3375, -2.4113, -2.4826, -2.5611]u"rad/m^2"
     mslm = [-1.0184, -1.1611, -1.2851, -1.4303, -1.5465, -1.6913, -1.8009, -1.9613, -2.0891, -2.2135, -2.2788, -2.3440, -2.4047, -2.4701]u"rad/m^2"
-    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=SLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS)) ≈ slm atol=3e-4u"rad/m^2"   # norm over the 14 scans; references to 1e-4, sky direction 7″ off ours
-    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=MSLM())), Ref(Track.SITE), Ref(Track.SRC), Track.SCANS)) ≈ mslm atol=3e-4u"rad/m^2"
+    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=SLM())), Ref(Track.LOS), Track.SCANS)) ≈ slm atol=3e-4u"rad/m^2"   # norm over the 14 scans; references to 1e-4, sky direction 7″ off ours
+    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=MSLM())), Ref(Track.LOS), Track.SCANS)) ≈ mslm atol=3e-4u"rad/m^2"
     # circumpolar source, time outside the map epochs
-    @test_throws BoundsError ionospheric_rm(GlobalMap(path; mapping=MSLM()), Track.SITE, ICRSCoords(0.0, -1.2), DateTime(2025, 7, 25, 20))
+    @test_throws BoundsError ionospheric_rm(GlobalMap(path; mapping=MSLM()), LineOfSight(Track.SITE, ICRSCoords(0.0, -1.2)), DateTime(2025, 7, 25, 20))
     # any sky frame: 3C138 in galactic coordinates
     m = GlobalMap(path; mapping=MSLM())
-    gal, icrs = ionospheric_rm.(Ref(m), Ref(Track.SITE), [convert(GalCoords, Track.SRC), Track.SRC], Track.SCANS[1])
+    gal, icrs = ionospheric_rm.(Ref(m), LineOfSight.(Ref(Track.SITE), [convert(GalCoords, Track.SRC), Track.SRC]), Track.SCANS[1])
     @test U.value(gal) ≈ U.value(icrs) rtol=1e-12
     @test U.uncertainty(gal) ≈ U.uncertainty(icrs) rtol=1e-12
     # site latitude and longitude as plain radians or as Unitful angles; height needs its unit
     plain = (; lat=deg2rad(-30.71292), lon=deg2rad(21.44380), h=1050.0u"m")
-    @test U.value(ionospheric_rm(m, plain, Track.SRC, Track.SCANS[1])) ≈ U.value(icrs) rtol=1e-12
-    @test_throws Unitful.DimensionError ionospheric_rm(m, (; Track.SITE..., h=1050.0), Track.SRC, Track.SCANS[1])
+    @test U.value(ionospheric_rm(m, LineOfSight(plain, Track.SRC), Track.SCANS[1])) ≈ U.value(icrs) rtol=1e-12
+    @test_throws Unitful.DimensionError ionospheric_rm(m, LineOfSight((; Track.SITE..., h=1050.0), Track.SRC), Track.SCANS[1])
 end
 
 @testitem "horizon and non-IONEX input" setup=[Track] begin
-    using Dates, Uncertain
+    using Dates, Uncertain, Unitful
     m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"); mapping=MSLM())
-    @test isnan(U.value(@inferred ionospheric_rm(m, Track.SITE, Track.SRC, DateTime(2025, 7, 25, 1))))    # 3C138 below the horizon
-    @test isnan(@inferred ionospheric_rm(GlobalMap(joinpath(Track.DATA, "codg0600.21i_crop.gz"); mapping=MSLM()), Track.SITE, Track.SRC, DateTime(2021, 3, 1, 3)))
+    # 3C138 below the horizon
+    @test isnan(U.value(@inferred ionospheric_rm(m, Track.LOS, DateTime(2025, 7, 25, 1))))
+    @test isnan(U.value(@inferred ionospheric_tec(m, Track.LOS, DateTime(2025, 7, 25, 1))))
+    m0 = GlobalMap(joinpath(Track.DATA, "codg0600.21i_crop.gz"); mapping=MSLM())
+    @test isnan(@inferred ionospheric_rm(m0, Track.LOS, DateTime(2021, 3, 1, 3)))
+    @test isnan(@inferred ionospheric_tec(m0, Track.LOS, DateTime(2021, 3, 1, 3)))
+    # RM needs a ray direction
+    @test_throws MethodError ionospheric_rm(m, Vertical(-30.0u"°", 21.0u"°"), DateTime(2025, 7, 25, 8))
     @test_throws Exception GlobalMap(@__FILE__; mapping=MSLM())
     @test_throws UndefKeywordError GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"))
 end
@@ -87,10 +94,22 @@ end
     # spinifex 2.0 get_rm_from_skycoord, single layer at 450 km (= SLM): RM and the TEC part of its error, |K·RMS·M·B∥|,
     # rescaled from its rounded constant 2.62e-6 to K_RM
     m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"); mapping=SLM())
-    rm = [ionospheric_rm(m, Track.SITE, Track.SRC, t) for t in DateTime(2025, 7, 25) .+ Minute.([366, 480, 612])]
+    rm = [ionospheric_rm(m, Track.LOS, t) for t in DateTime(2025, 7, 25) .+ Minute.([366, 480, 612])]
     @test U.value.(rm) ≈ [-1.045650, -1.843167, -2.561181]u"rad/m^2" atol=3e-4u"rad/m^2"
     @test U.uncertainty.(rm) ≈ [0.105383, 0.106252, 0.136799]u"rad/m^2" atol=3e-5u"rad/m^2"
-    @test (@inferred ionospheric_rm(m, Track.SITE, Track.SRC, DateTime(2025, 7, 25, 8))) isa Uncertain.Value
+    @test (@inferred ionospheric_rm(m, Track.LOS, DateTime(2025, 7, 25, 8))) isa Uncertain.Value
+
+    # TEC through the public interface, in m⁻²: vertical at a shell point (from the spinifex values above),
+    # and slant along the line of sight (spinifex VTEC and RMS × its airmass at the same three times;
+    # its line of sight includes aberration, 15″ here, ours does not)
+    v = ionospheric_tec(m, Vertical(-23.98u"°", 24.26u"°"), DateTime(2025, 7, 25, 6))
+    @test U.value(v) ≈ 14.669162e16u"m^-2" rtol=1e-6
+    @test U.uncertainty(v) ≈ 1.314800e16u"m^-2" rtol=1e-6
+    @test U.value(ionospheric_tec(m, Vertical(deg2rad(-23.98), deg2rad(24.26)), DateTime(2025, 7, 25, 6))) == U.value(v)
+    s = [ionospheric_tec(m, Track.LOS, t) for t in DateTime(2025, 7, 25) .+ Minute.([366, 480, 612])]
+    @test U.value.(s) ≈ [20.35420, 31.72016, 49.29405]u"m^-2" .* 1e16 rtol=1e-4
+    @test U.uncertainty.(s) ≈ [2.05135, 1.82856, 2.63291]u"m^-2" .* 1e16 rtol=1e-4
+    @test ionospheric_tec(GlobalMap(joinpath(Track.DATA, "codg0600.21i_crop.gz"); mapping=MSLM()), Vertical(-30.0u"°", 21.0u"°"), DateTime(2021, 3, 1, 3)) isa Unitful.Quantity
 end
 
 @testitem "grid interpolation: longitude wrap, seam, grid edges, map epochs" begin
@@ -196,7 +215,7 @@ end
 
     # 3C286: a single daily file jumps at midnight, the merged map does not
     src = ICRSCoords(deg2rad(15 * (13 + 31/60 + 8.288/3600)), deg2rad(30 + 30/60 + 32.96/3600))
-    rm(model, t) = ionospheric_rm(model, Track.SITE, src, t)
+    rm(model, t) = ionospheric_rm(model, LineOfSight(Track.SITE, src), t)
     midnight = DateTime(2021, 3, 1)
     @test [rm(m59, midnight), rm(m60, midnight)] ≈ [-0.4833, -0.4795]u"rad/m^2" atol=1e-4u"rad/m^2"
     @test rm(m, midnight - Millisecond(1)) ≈ rm(m, midnight) atol=1e-7u"rad/m^2"
