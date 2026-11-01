@@ -97,6 +97,34 @@ end
     @test b.tec ≈ a.tec rtol=1e-14
 end
 
+@testitem "IONEX records: fixed-width fields, record order, completeness" setup=[Track] begin
+    using IonosphericRM: read_ionex, headerlabel
+    day60, day60e2, day60e3 = joinpath.(Track.DATA, ["codg0600.21i_crop.gz", "codg0600.21i_crop_exp2.gz", "codg0600.21i_crop_exp3.gz"])
+    ref = read_ionex(day60)
+    # exponent -3: values from 10000 fill all 5 columns and touch their neighbours
+    @test read_ionex(day60e3).tec ≈ ref.tec rtol=1e-14
+
+    function rewritten(f, path)
+        out = tempname()
+        write(out, join(f(readlines(`gzip -dc $path`)), "\n"))
+        out
+    end
+    starts(lines) = findall(l -> headerlabel(l) == "START OF TEC MAP", lines)
+    # EXPONENT record before EPOCH OF CURRENT MAP
+    swapped = rewritten(day60e2) do lines
+        foldl((ls, i) -> ls[[1:i; i+2; i+1; i+3:end]], starts(lines); init=lines)
+    end
+    @test isequal(read_ionex(swapped), read_ionex(day60e2))
+    # cut between maps or inside a map
+    @test_throws ArgumentError read_ionex(rewritten(ls -> ls[1:starts(ls)[end]-1], day60))
+    @test_throws Exception read_ionex(rewritten(ls -> ls[1:starts(ls)[end]+5], day60))
+    # row records that disagree with the header grid
+    @test_throws AssertionError read_ionex(rewritten(ls -> replace(ls, "   -10.0 -10.0  55.0   5.0 450.0" * " "^28 * "LAT/LON1/LON2/DLON/H" =>
+                                                                       "   -10.0  -5.0  60.0   5.0 450.0" * " "^28 * "LAT/LON1/LON2/DLON/H"), day60))
+    @test_throws AssertionError read_ionex(rewritten(ls -> replace(ls, "   -12.5 -10.0  55.0   5.0 450.0" * " "^28 * "LAT/LON1/LON2/DLON/H" =>
+                                                                       "   -12.0 -10.0  55.0   5.0 450.0" * " "^28 * "LAT/LON1/LON2/DLON/H"), day60))
+end
+
 @testitem "multi-day maps: incompatible or non-consecutive files" setup=[Track] begin
     using Dates
     using IonosphericRM: read_ionex, append_ionex
