@@ -4,17 +4,43 @@ struct SLM end
 struct MSLM end
 
 """
+    GlobalMap(paths; mapping)
     GlobalMap(path; mapping)
 
-Thin-shell model from an IONEX global ionosphere map: VTEC bilinearly interpolated at the pierce point,
-maps blended in time after rotating each with the Sun (IONEX recommendation).
-`mapping` (`SLM()` or `MSLM()`) converts VTEC to slant TEC; use the one the map was produced with.
+Thin-shell model from IONEX global ionosphere maps: VTEC bilinearly interpolated at the pierce point,
+maps blended in time after rotating each with the Sun (IONEX method 3), also across file boundaries.
+`mapping` (`SLM()` or `MSLM()`) converts VTEC to slant TEC; use the one the maps were produced with.
+
+`paths` are files of consecutive periods in time order, e.g. the daily files of an observation that
+crosses midnight. They must share the grid, base radius, shell height and mapping function, and each
+must start no later than one map interval after the previous one ends.
+Where consecutive files overlap — normally the midnight map that closes one daily file and opens the
+next, from two separate daily solutions — the later file's maps are used. IONEX assigns a time to the
+interval `Tᵢ ≤ t < Tᵢ₊₁`, so a day file covers `[00:00, 24:00)` and its 24:00 map only closes the last
+interval; the epoch itself belongs to the next day. AIPS TECOR (NFILES > 1) and spinifex
+(`remove_midnight_jumps`) treat the shared epoch the same way, which keeps TEC continuous in time.
 """
 struct GlobalMap{I, M}
     ionex::I
     mapping::M
 end
-GlobalMap(path::AbstractString; mapping) = GlobalMap(read_ionex(path), mapping)
+GlobalMap(paths; mapping) = GlobalMap(foldl(append_ionex, map(read_ionex, paths)), mapping)
+GlobalMap(path::AbstractString; mapping) = GlobalMap((path,); mapping)
+
+# `b`'s maps from its first epoch on replace `a`'s
+function append_ionex(a, b)
+    for k in (:lats, :lons, :radius, :height, :mapping)
+        a[k] == b[k] || throw(ArgumentError("IONEX files differ in $k: $(a[k]) vs $(b[k])"))
+    end
+    first(a.epochs) < first(b.epochs) && last(a.epochs) < last(b.epochs) ||
+        throw(ArgumentError("IONEX files not in time order: $(first(a.epochs))–$(last(a.epochs)) followed by $(first(b.epochs))–$(last(b.epochs))"))
+    # interpolating across the junction is no coarser than within either file
+    spacing = maximum(I -> maximum(diff(I.epochs); init=Millisecond(0)), (a, b))
+    first(b.epochs) - last(a.epochs) <= spacing ||
+        throw(ArgumentError("gap between IONEX files: $(last(a.epochs)) to $(first(b.epochs)), maps are $spacing apart"))
+    keep = a.epochs .< first(b.epochs)
+    (; a..., epochs=[a.epochs[keep]; b.epochs], tec=cat(a.tec[:, :, keep], b.tec; dims=3))
+end
 
 function bilinear(I, M, lat, lon)
     lon = mod(lon + 180, 360) - 180
