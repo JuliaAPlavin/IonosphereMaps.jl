@@ -11,6 +11,7 @@ Thin-shell model from IONEX global ionosphere maps: VTEC bilinearly interpolated
 maps blended in time after rotating each with the Sun (IONEX method 3), also across file boundaries.
 `mapping` (`SLM()` or `MSLM()`) converts VTEC to slant TEC; use the one the maps were produced with.
 Pierce points beyond the grid (e.g. past ±87.5° latitude, or outside a regional map) are an error.
+A map node without a value (9999 in IONEX) makes interpolation through it NaN.
 
 `paths` are files of consecutive periods in time order, e.g. the daily files of an observation that
 crosses midnight. They must share the grid, base radius, shell height and mapping function, and each
