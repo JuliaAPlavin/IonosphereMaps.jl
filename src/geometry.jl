@@ -2,7 +2,6 @@
 const K_RM = u"q"^3 / (8π^2 * u"ε0" * u"me"^2 * u"c"^3)
 # group delay = K_ION ∫ nₑ dl / (c ν²)
 const K_ION = u"q"^2 / (8π^2 * u"ε0" * u"me")
-const TECU = 1e16u"m^-2"
 
 # geodetic WGS84 site → ECEF; the library takes plain metres
 ecef(site) = geodetic_to_ecef(site.lat, site.lon, ustrip(u"m", site.h)) * u"m"

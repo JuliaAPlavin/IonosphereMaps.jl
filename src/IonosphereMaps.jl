@@ -11,6 +11,7 @@ using SatelliteToolboxGeomagneticField: igrf
 using SatelliteToolboxTransformations: r_eci_to_ecef, J2000, PEF, ecef_to_geodetic, geodetic_to_ecef
 using Uncertain: ±ᵤ
 using Unitful: @u_str, Frequency, Length, uconvert, ustrip
+using UnitfulAstro: TECU
 
 export ionospheric_rm, ionospheric_tec, ionospheric_group_delay, vtec, Ray, LineOfSight, GlobalMap, SLM, MSLM, Petrov2023
 
@@ -62,7 +63,7 @@ include("globalmap.jl")
 """
     ionospheric_tec(model, geometry, t::DateTime)
 
-Ionospheric total electron content (m⁻²) along a `Ray` or `LineOfSight` at UTC `t` as predicted by the model,
+Ionospheric total electron content (TECU) along a `Ray` or `LineOfSight` at UTC `t` as predicted by the model,
 its mapping included; NaN below the geodetic horizon of the ray origin. For maps with RMS maps, returns `tec ±ᵤ σ`
 (`Uncertain.Value`), σ from the map RMS. For a map's own vertical TEC, see [`vtec`](@ref).
 """

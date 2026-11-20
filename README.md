@@ -11,10 +11,10 @@ site = (; lat=-30.71292u"°", lon=21.44380u"°", h=1050u"m")                 # M
 los = LineOfSight(site, ICRSCoords(80.29119u"°", 16.63946u"°"))  # 3C138
 t = DateTime(2025, 1, 26, 23, 30)
 
-ionospheric_tec(m, los, t)                      # 5.39e17 m^-2 ±ᵤ 5.81e16 m^-2
+ionospheric_tec(m, los, t)                      # 53.9 TECU ±ᵤ 5.81 TECU
 ionospheric_rm(m, los, t)                       # -2.257 rad m^-2 ±ᵤ 0.243 rad m^-2
 ionospheric_group_delay(m, los, t, 8.4u"GHz")   # 1.026e-9 s ±ᵤ 1.11e-10 s
-vtec(m, (; lat=-30u"°", lon=21u"°"), t)         # 1.639e17 m^-2 ±ᵤ 2.21e16 m^-2
+vtec(m, (; lat=-30u"°", lon=21u"°"), t)         # 16.39 TECU ±ᵤ 2.21 TECU
 ```
 
 ## Model

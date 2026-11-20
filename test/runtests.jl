@@ -14,7 +14,6 @@ using TestItemRunner
     # the same line of sight as an Earth-fixed ray, at time t
     ray(t) = Ray(SITE, source_direction(SRC, t))
     const GEOMETRIES = [Returns(LOS), ray]
-    const TECU = 1e16u"m^-2"
     # maps of 1 TECU everywhere at time T: slant TEC in TECU is the mapping factor
     const T = DateTime(2025, 1, 1)
     uniform(; radius=6371.0u"km", height=450.0u"km") =
@@ -91,7 +90,7 @@ end
 
 @testitem "RMS maps: VTEC and RM uncertainties" setup=[Track] begin
     using Dates, StaticArrays, Uncertain, Unitful
-    using .Track: TECU
+    using UnitfulAstro
     points = [(-23.98, 24.26), (-39.17, 26.65), (-30.85, 21.34), (-25.0, 40.0)]
     # spinifex 2.0 interpolate_ionex: (TEC, RMS) in TECU, Earth rotation on, UQRG RMS correction off
     cod = [
@@ -107,12 +106,12 @@ end
         m = GlobalMap(joinpath(Track.DATA, file); mapping=SLM())
         v = [vtec(m, (; lat = lat * u"°", lon = lon * u"°"), t) for (t, _) in ref for (lat, lon) in points]
         expected = collect(Iterators.flatmap(last, ref))
-        @test U.value.(v) ≈ first.(expected) .* TECU atol=3e-6TECU   # norm over values given to 1e-6
-        @test U.uncertainty.(v) ≈ last.(expected) .* TECU atol=3e-6TECU
+        @test U.value.(v) ≈ first.(expected) .* u"TECU" atol=3e-6u"TECU"   # norm over values given to 1e-6
+        @test U.uncertainty.(v) ≈ last.(expected) .* u"TECU" atol=3e-6u"TECU"
     end
     # no RMS maps: a plain value; at a node at a map epoch it is the file's, 33 × 0.1 TECU
     @test (@inferred vtec(GlobalMap(joinpath(Track.DATA, "codg0600.21i_crop.gz"); mapping=MSLM()), (; lat = -30.0u"°", lon = 20.0u"°"), DateTime(2021, 3, 1, 3)))::Unitful.Quantity ≈
-          3.3e16u"m^-2" rtol=1e-14
+          3.3u"TECU" rtol=1e-14
 
     # spinifex 2.0 get_rm_from_skycoord, single layer at 450 km (= SLM): RM and the TEC part of its error, |K·RMS·M·B∥|,
     # rescaled from its rounded constant 2.62e-6 to K_RM
@@ -128,19 +127,19 @@ end
     # VTEC at a shell point (from the spinifex values above), angles Unitful or plain radians; the mapping plays no role
     t = DateTime(2025, 7, 25, 6)
     v = @inferred vtec(m, (; lat = -23.98u"°", lon = 24.26u"°"), t)
-    @test U.value(v) ≈ 14.669162e16u"m^-2" rtol=1e-6
-    @test U.uncertainty(v) ≈ 1.314800e16u"m^-2" rtol=1e-6
+    @test U.value(v) ≈ 14.669162u"TECU" rtol=1e-6
+    @test U.uncertainty(v) ≈ 1.314800u"TECU" rtol=1e-6
     @testset for v′ in [vtec(m, (; lat = deg2rad(-23.98), lon = deg2rad(24.26)), t),
                         vtec(GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"); mapping=Petrov2023()), (; lat = -23.98u"°", lon = 24.26u"°"), t)]
         @test U.value(v′) ≈ U.value(v) rtol=1e-14
         @test U.uncertainty(v′) ≈ U.uncertainty(v) rtol=1e-14
     end
-    # slant TEC along the line of sight, in m⁻²: spinifex VTEC and RMS × its airmass at the same three times;
+    # slant TEC along the line of sight: spinifex VTEC and RMS × its airmass at the same three times;
     # its line of sight includes aberration, 15″ here, ours does not
     @testset for geometry in Track.GEOMETRIES
         s = [ionospheric_tec(m, geometry(t), t) for t in DateTime(2025, 7, 25) .+ Minute.([366, 480, 612])]
-        @test U.value.(s) ≈ [20.35420, 31.72016, 49.29405] .* TECU rtol=1e-4
-        @test U.uncertainty.(s) ≈ [2.05135, 1.82856, 2.63291] .* TECU rtol=1e-4
+        @test U.value.(s) ≈ [20.35420, 31.72016, 49.29405] .* u"TECU" rtol=1e-4
+        @test U.uncertainty.(s) ≈ [2.05135, 1.82856, 2.63291] .* u"TECU" rtol=1e-4
         t = DateTime(2025, 7, 25, 8)
         @test (@inferred ionospheric_tec(m, geometry(t), t)) isa Uncertain.Value
     end
@@ -154,18 +153,19 @@ end
     @test U.value.(rm) ≈ [-1.045650, -1.843167, -2.561181]u"rad/m^2" atol=3e-4u"rad/m^2"
     @test U.uncertainty.(rm) ≈ [0.105383, 0.106252, 0.136799]u"rad/m^2" atol=3e-5u"rad/m^2"
     s = [ionospheric_tec(m, ray, t) for (t, ray) in rays]
-    @test U.value.(s) ≈ [20.35420, 31.72016, 49.29405] .* TECU rtol=1e-4
-    @test U.uncertainty.(s) ≈ [2.05135, 1.82856, 2.63291] .* TECU rtol=1e-4
+    @test U.value.(s) ≈ [20.35420, 31.72016, 49.29405] .* u"TECU" rtol=1e-4
+    @test U.uncertainty.(s) ≈ [2.05135, 1.82856, 2.63291] .* u"TECU" rtol=1e-4
 end
 
 @testitem "Ray: vertical at a grid node, geodetic horizon, construction" setup=[Track] begin
     using Dates, StaticArrays, Uncertain, Unitful
+    using UnitfulAstro
     # from the WGS84 equator at 90°E straight up: pierces the shell at the grid node 0°N 90°E;
     # its VTEC and RMS in the 06:00 maps of the file are 719 and 25 (× 0.1 TECU)
     m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_seam.INX.gz"); mapping=SLM())
     v = @inferred ionospheric_tec(m, Ray(SVector(0.0, 6378137.0, 0.0)u"m", SVector(0.0, 1.0, 0.0)), DateTime(2025, 7, 25, 6))
-    @test U.value(v) ≈ 71.9e16u"m^-2" rtol=1e-14
-    @test U.uncertainty(v) ≈ 2.5e16u"m^-2" rtol=1e-14
+    @test U.value(v) ≈ 71.9u"TECU" rtol=1e-14
+    @test U.uncertainty(v) ≈ 2.5u"TECU" rtol=1e-14
 
     # at MeerKAT, toward the north at -0.05° geodetic elevation: below the geodetic horizon,
     # above the geocentric one (+0.12°)
@@ -199,11 +199,11 @@ end
 
 @testitem "Petrov 2023 mapping" setup=[Track] begin
     using StaticArrays, Unitful
-    using .Track: TECU
+    using UnitfulAstro
     uniform(radius, height) = GlobalMap(Track.uniform(; radius, height), Petrov2023())
     # from 45°N 0°E on the reference sphere, northward at geocentric elevation e (geodetic elevation 0.19° higher)
     ray(R, e) = Ray(R * SVector(cosd(45), 0, sind(45)), sind(e) * SVector(cosd(45), 0, sind(45)) + cosd(e) * SVector(-sind(45), 0, cosd(45)))
-    factor(m, R, e) = (@inferred ionospheric_tec(m, ray(R, e), Track.T)) / TECU
+    factor(m, R, e) = (@inferred ionospheric_tec(m, ray(R, e), Track.T)) / u"TECU"
     # eq. 12 of the paper in 256-bit BigFloat, outside the package
     m = uniform(6371.0u"km", 450.0u"km")
     M = factor.(Ref(m), 6371.0u"km", [90, 45, 30, 20, 15, 10, 5])
@@ -217,7 +217,7 @@ end
 @testitem "mapping factors at the zenith" setup=[Track] begin
     using LinearAlgebra, Unitful
     using IonosphereMaps: ecef
-    using .Track: TECU
+    using UnitfulAstro
     sites = [(; lat, lon, h) for lat in (-89.9:9.99:89.9)u"°" for lon in (-179.0:47.0:179.0)u"°" for h in (0.0u"m", 3000.0u"m")]
     geocentric(site) = normalize(ecef(site))
     geodetic(site) = Track.enu(site.lat, site.lon).up
@@ -227,7 +227,7 @@ end
     @testset for (mapping, own, other, zenith) in [(SLM(), geocentric, geodetic, 1), (MSLM(), geodetic, geocentric, 1),
                                                    (Petrov2023(), geocentric, geodetic, 0.8504277878317943)]
         m = GlobalMap(Track.uniform(), mapping)
-        factors(up) = [ionospheric_tec(m, Ray(site, s * up(site)), Track.T) / TECU for site in sites for s in 1 .+ (-4:4) .* eps()]
+        factors(up) = [ionospheric_tec(m, Ray(site, s * up(site)), Track.T) / u"TECU" for site in sites for s in 1 .+ (-4:4) .* eps()]
         @test factors(own) ≈ fill(zenith, 9length(sites)) rtol=1e-14
         @test factors(other) ≈ fill(zenith, 9length(sites)) rtol=2e-4
     end
@@ -273,8 +273,8 @@ end
 
 @testitem "grid interpolation: longitude wrap, seam, grid edges, map epochs" setup=[Track] begin
     using Dates, AxisKeys
-    using Unitful: °
-    using .Track: TECU
+    using Unitful: @u_str, °
+    using UnitfulAstro
     t0 = DateTime(2025, 1, 1)
     f(lat, lon) = 10 + 3cosd(lon) + 2sind(2lon) + lat / 10
     lats = 10.0:-2.5:-10.0
@@ -287,19 +287,19 @@ end
     pts = [(t, lat, lon) for t in t0 .+ Minute.([0, 20, 60]) for lat in (7.0, -10.0) for lon in (-180, -179, -1, 0, 1, 176, 177.5, 179, 180, 181, 359)]
     v = [[vtec(m, (; lat = lat * °, lon = lon * °), t) for (t, lat, lon) in pts] for m in grids]
     @test all(≈(v[1]; rtol=1e-12), v)
-    @test vtec(grids[1], (; lat = 5.0°, lon = 177.5°), t0) ≈ (f(5, 175) + f(5, 180)) / 2 * TECU
-    @test vtec(grids[2], (; lat = 5.0°, lon = 177.5°), t0) ≈ (f(5, 175) + f(5, -180)) / 2 * TECU
-    @test vtec(grids[1], (; lat = 5.0°, lon = 2.5°), t0 + Hour(1)) ≈ (f(5, 15) + f(5, 20)) / 2 * TECU
+    @test vtec(grids[1], (; lat = 5.0°, lon = 177.5°), t0) ≈ (f(5, 175) + f(5, 180)) / 2 * u"TECU"
+    @test vtec(grids[2], (; lat = 5.0°, lon = 177.5°), t0) ≈ (f(5, 175) + f(5, -180)) / 2 * u"TECU"
+    @test vtec(grids[1], (; lat = 5.0°, lon = 2.5°), t0 + Hour(1)) ≈ (f(5, 15) + f(5, 20)) / 2 * u"TECU"
 
     # ±180 columns that differ: each side of the seam interpolates from its own column
     seam = ionex(-180.0:5.0:180.0; fixlon=M -> [M[:, 1:end-1] M[:, end] .+ 10])
-    @test vtec(seam, (; lat = 5.0°, lon = 179.0°), t0) ≈ (0.2f(5, 175) + 0.8(f(5, 180) + 10)) * TECU
-    @test vtec(seam, (; lat = 5.0°, lon = -179.0°), t0) ≈ (0.8f(5, -180) + 0.2f(5, -175)) * TECU
+    @test vtec(seam, (; lat = 5.0°, lon = 179.0°), t0) ≈ (0.2f(5, 175) + 0.8(f(5, 180) + 10)) * u"TECU"
+    @test vtec(seam, (; lat = 5.0°, lon = -179.0°), t0) ≈ (0.8f(5, -180) + 0.2f(5, -175)) * u"TECU"
 
     # regional grid: grid edges included, beyond them an error, not an extrapolation
     reg = ionex(-10.0:5.0:55.0)
-    @test vtec(reg, (; lat = -10.0°, lon = 55.0°), t0) ≈ f(-10, 55) * TECU
-    @test vtec(reg, (; lat = 10.0°, lon = -10.0°), t0) ≈ f(10, -10) * TECU
+    @test vtec(reg, (; lat = -10.0°, lon = 55.0°), t0) ≈ f(-10, 55) * u"TECU"
+    @test vtec(reg, (; lat = 10.0°, lon = -10.0°), t0) ≈ f(10, -10) * u"TECU"
     @test_throws DomainError vtec(reg, (; lat = 0.0°, lon = 56.0°), t0)
     @test_throws DomainError vtec(reg, (; lat = 0.0°, lon = -11.0°), t0)
     @test_throws DomainError vtec(reg, (; lat = 0.0°, lon = 50.0°), t0 + Minute(30))   # rotated out of the grid in the second map
@@ -307,9 +307,9 @@ end
     @test_throws DomainError vtec(grids[1], (; lat = -12.0°, lon = 0.0°), t0)
 
     # map epochs: both ends included, a file with a single map
-    @test vtec(grids[1], (; lat = 0.0°, lon = 20.0°), t0 + Hour(1)) ≈ f(0, 35) * TECU
+    @test vtec(grids[1], (; lat = 0.0°, lon = 20.0°), t0 + Hour(1)) ≈ f(0, 35) * u"TECU"
     single = GlobalMap((; rms=nothing, tec=grids[1].ionex.tec[:, :, 1:1]), SLM())
-    @test vtec(single, (; lat = 0.0°, lon = 20.0°), t0) ≈ f(0, 20) * TECU
+    @test vtec(single, (; lat = 0.0°, lon = 20.0°), t0) ≈ f(0, 20) * u"TECU"
     @test_throws DomainError vtec(single, (; lat = 0.0°, lon = 20.0°), t0 + Minute(1))
     @test_throws DomainError vtec(single, (; lat = 0.0°, lon = 20.0°), t0 - Minute(1))
     @test_throws DomainError vtec(grids[1], (; lat = 0.0°, lon = 20.0°), t0 - Minute(1))
@@ -319,7 +319,7 @@ end
 @testitem "grid interpolation: polar caps" setup=[Track] begin
     using Dates, AxisKeys, Uncertain
     using Unitful: @u_str, °
-    using .Track: TECU
+    using UnitfulAstro
     t = DateTime(2025, 1, 1)
     # rows at 60, 30, 0, -30, -60°, columns at -180, -90, 0, 90°; ring means: TEC 3 (north), 25 (south), RMS 2 (north)
     tec = [1 2 3 6; 7 7 7 7; 8 8 8 8; 9 9 9 9; 10 20 30 40]
@@ -337,14 +337,14 @@ end
              (75.0, -135.0) => (2.25, 1.5), (80.0, 45.0) => (3.5, 7/3), (-70.0, 112.5) => (30, 1)]
     @testset for m in grids
         v = [vtec(m, (; lat = lat * °, lon = lon * °), t) for ((lat, lon), _) in cases]
-        @test U.value.(v) ≈ [T for (_, (T, _)) in cases] .* TECU rtol=1e-12
-        @test U.uncertainty.(v) ≈ [σ for (_, (_, σ)) in cases] .* TECU rtol=1e-12
+        @test U.value.(v) ≈ float.([T for (_, (T, _)) in cases]) .* u"TECU" rtol=1e-12
+        @test U.uncertainty.(v) ≈ float.([σ for (_, (_, σ)) in cases]) .* u"TECU" rtol=1e-12
         @test_throws DomainError vtec(m, (; lat = 90.5°, lon = 0.0°), t)
     end
     # a missing node in the outermost row: NaN throughout its cap, the rest of the map unaffected
     holed = gmap([NaN 2 3 6; tec[2:end, :]], rms, 60.0:-30.0:-60.0, -180.0:90.0:90.0)
     @test isnan(U.value(vtec(holed, (; lat = 89.0°, lon = 45.0°), t)))
-    @test U.value.([vtec(holed, (; lat = 45.0°, lon = 45.0°), t), vtec(holed, (; lat = -70.0°, lon = 112.5°), t)]) ≈ [5.75, 30] .* TECU rtol=1e-12    # beyond the grid otherwise: not all longitudes, or the outermost row not one step from the pole
+    @test U.value.([vtec(holed, (; lat = 45.0°, lon = 45.0°), t), vtec(holed, (; lat = -70.0°, lon = 112.5°), t)]) ≈ [5.75, 30] .* u"TECU" rtol=1e-12    # beyond the grid otherwise: not all longitudes, or the outermost row not one step from the pole
     @test_throws DomainError vtec(gmap(tec[:, 1:3], rms[:, 1:3], 60.0:-30.0:-60.0, -180.0:90.0:0.0), (; lat = 75.0°, lon = -135.0°), t)
     @test_throws DomainError vtec(gmap(tec, rms, 50.0:-25.0:-50.0, -180.0:90.0:90.0), (; lat = 60.0°, lon = 0.0°), t)
     @test_throws DomainError vtec(gmap(tec, rms, 50.0:-25.0:-50.0, -180.0:90.0:90.0), (; lat = -60.0°, lon = 0.0°), t)
@@ -357,13 +357,13 @@ end
     lat, lon = 78.93°, 11.87°
     (; up, north) = Track.enu(lat, lon)
     s = @inferred ionospheric_tec(m, Ray((; lat, lon, h=87.0u"m"), cosd(12) * north + sind(12) * up), DateTime(2025, 8, 31, 6, 20))
-    @test U.value(s) ≈ 40.244515712906505TECU rtol=1e-12
-    @test U.uncertainty(s) ≈ 7.990758323319431TECU rtol=1e-12
+    @test U.value(s) ≈ 40.244515712906505u"TECU" rtol=1e-12
+    @test U.uncertainty(s) ≈ 7.990758323319431u"TECU" rtol=1e-12
 end
 
 @testitem "grid interpolation: real maps across the ±180 seam" setup=[Track] begin
     using Dates, Uncertain, Unitful
-    using .Track: TECU
+    using UnitfulAstro
     points = [(0.0, 179.0), (0.0, -179.0), (10.0, 357.5)]
     # spinifex 2.0 interpolate_ionex (TEC, RMS), with its lookup of the two nodes around a point near ±180 fixed;
     # UPC's -180 and +180 columns differ, each side of the seam uses its own
@@ -380,8 +380,8 @@ end
         m = GlobalMap(joinpath(Track.DATA, file); mapping=SLM())
         v = [vtec(m, (; lat = lat * u"°", lon = lon * u"°"), t) for (t, _) in ref for (lat, lon) in points]
         expected = collect(Iterators.flatmap(last, ref))
-        @test U.value.(v) ≈ first.(expected) .* TECU atol=3e-6TECU
-        @test U.uncertainty.(v) ≈ last.(expected) .* TECU atol=3e-6TECU
+        @test U.value.(v) ≈ first.(expected) .* u"TECU" atol=3e-6u"TECU"
+        @test U.uncertainty.(v) ≈ last.(expected) .* u"TECU" atol=3e-6u"TECU"
     end
 end
 
@@ -397,7 +397,7 @@ end
 
 @testitem "multi-day maps: the later file's midnight map, continuous across midnight" setup=[Track] begin
     using Dates, SkyCoords, AxisKeys, Unitful, UnitfulAngles
-    using .Track: TECU
+    using UnitfulAstro
     # CODE final GIMs for 2021-02-28 (21–24 h) and 2021-03-01 (0–6 h), cropped; both hold a 03-01 00:00 map
     day59, day60 = joinpath.(Track.DATA, ["codg0590.21i_crop.gz", "codg0600.21i_crop.gz"])
     m59 = GlobalMap(day59; mapping=MSLM()); m60 = GlobalMap(day60; mapping=MSLM())
@@ -418,7 +418,7 @@ end
         DateTime(2021, 3, 1, 0, 0)    => [5.268362, 4.067600, 3.558712, 3.900000],
         DateTime(2021, 3, 1, 0, 20)   => [5.153949, 3.982052, 3.629691, 4.100000],
         DateTime(2021, 3, 1, 0, 40)   => [4.949695, 3.911511, 3.637171, 4.033333]]
-    @test [vtec(m, (; lat = lat * u"°", lon = lon * u"°"), t) for (t, _) in spinifex for (lat, lon) in points] ≈ collect(Iterators.flatmap(last, spinifex)) .* TECU atol=3e-6TECU   # norm over 28 values given to 1e-6
+    @test [vtec(m, (; lat = lat * u"°", lon = lon * u"°"), t) for (t, _) in spinifex for (lat, lon) in points] ≈ collect(Iterators.flatmap(last, spinifex)) .* u"TECU" atol=3e-6u"TECU"   # norm over 28 values given to 1e-6
 
     # 3C286: a single daily file jumps at midnight, the merged map does not
     src = ICRSCoords((13 + 31/60 + 8.288/3600)u"hourAngle", (30 + 30/60 + 32.96/3600)u"°")
@@ -550,10 +550,10 @@ end
 
 @testitem "IONEX records: `nan` as a missing value" setup=[Track] begin
     using Dates, Uncertain
-    using Unitful: °
+    using Unitful: @u_str, °
     using IonosphereMaps: read_ionex
     using Gzip_jll: gzip
-    using .Track: TECU
+    using UnitfulAstro
     # UQRG 2022-02-20, maps 06:30–07:00 on 50–40°N, 25–45°E; the 06:45 RMS map has `nan` at 45°N 35°E
     path = joinpath(Track.DATA, "uqrg0510.22i_crop.gz")
     m = GlobalMap(path; mapping=SLM())
@@ -575,16 +575,16 @@ end
     # at 06:45: VTEC throughout, RMS NaN at the node and the centres of its four cells, finite in other cells
     t = DateTime(2022, 2, 20, 6, 45)
     near = [vtec(m, (; lat = lat * °, lon = lon * °), t) for (lat, lon) in [(45.0, 35.0), (46.25, 32.5), (46.25, 37.5), (43.75, 32.5), (43.75, 37.5)]]
-    @test U.value.(near) ≈ [14.5, 12.95, 13.55, 14.1, 14.725] .* TECU rtol=1e-12
+    @test U.value.(near) ≈ [14.5, 12.95, 13.55, 14.1, 14.725] .* u"TECU" rtol=1e-12
     @test all(isnan, U.uncertainty.(near))
     far = [vtec(m, (; lat = lat * °, lon = lon * °), t) for (lat, lon) in [(48.75, 27.5), (41.25, 42.5), (50.0, 45.0), (40.0, 25.0)]]
-    @test U.value.(far) ≈ [10.225, 16.25, 12.4, 13.5] .* TECU rtol=1e-12
-    @test U.uncertainty.(far) ≈ [2.3, 2.325, 2.3, 2.3] .* TECU rtol=1e-12
+    @test U.value.(far) ≈ [10.225, 16.25, 12.4, 13.5] .* u"TECU" rtol=1e-12
+    @test U.uncertainty.(far) ≈ [2.3, 2.325, 2.3, 2.3] .* u"TECU" rtol=1e-12
     # the node is missing only from its own map: NaN within its two map intervals, not at the neighbouring map epochs
     @test isnan(U.uncertainty(vtec(m, (; lat = 45.0°, lon = 35.0°), DateTime(2022, 2, 20, 6, 50))))
     ends = [vtec(m, (; lat = 45.0°, lon = 35.0°), t) for t in DateTime(2022, 2, 20, 6) .+ Minute.([30, 60])]
-    @test U.value.(ends) ≈ [13.7, 14.2] .* TECU rtol=1e-12
-    @test U.uncertainty.(ends) ≈ [2.3, 2.3] .* TECU rtol=1e-12
+    @test U.value.(ends) ≈ [13.7, 14.2] .* u"TECU" rtol=1e-12
+    @test U.uncertainty.(ends) ≈ [2.3, 2.3] .* u"TECU" rtol=1e-12
 
     # `nan` in any case; any other non-number fails to parse
     function respelled(s)
@@ -634,6 +634,7 @@ end
 
 @testitem "type stability of the public entry points" setup=[Track] begin
     using Dates, Uncertain, Unitful
+    using UnitfulAstro
     # with RMS maps (CODE 2025-07-25, 03–13 h) and without (CODE 2021-03-01, 0–6 h); 3C138 up at the first time, down at the second
     @testset for (file, t, T) in [("COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz", DateTime(2025, 7, 25, 8), Uncertain.Value),
                                   ("codg0600.21i_crop.gz", DateTime(2021, 3, 1, 3), Unitful.Quantity)],
@@ -645,6 +646,9 @@ end
         @test (@inferred ionospheric_group_delay(m, geometry(t), t, 1.4u"GHz")) isa T
         @test (@inferred vtec(m, (; lat = -30.0u"°", lon = 21.0u"°"), t)) isa T
         @test (@inferred vtec(m, (; lat = deg2rad(-30.0), lon = deg2rad(21.0)), t)) isa T
+        # TEC in TECU, not just of its dimension
+        @test unit(U.value(ionospheric_tec(m, geometry(t), t))) == u"TECU"
+        @test unit(U.value(vtec(m, (; lat = -30.0u"°", lon = 21.0u"°"), t))) == u"TECU"
     end
 end
 

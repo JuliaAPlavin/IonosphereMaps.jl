@@ -113,7 +113,7 @@ interpolate(::Nothing, lat, lon, t, k) = nothing
 """
     vtec(m::GlobalMap, p, t::DateTime)
 
-Vertical total electron content (m⁻²) of the maps of `m` at the point `p` of their shell, geocentric `(; lat, lon)`
+Vertical total electron content (TECU) of the maps of `m` at the point `p` of their shell, geocentric `(; lat, lon)`
 or any object with these properties (angles Unitful, or plain radians), at UTC `t`, interpolated as described in [`GlobalMap`](@ref). For maps with RMS maps, returns
 `tec ±ᵤ σ` (`Uncertain.Value`), σ from the map RMS. This is the maps' own data, not a model prediction:
 the mapping of `m` plays no role (e.g. no scale factor k of `Petrov2023`).
@@ -148,7 +148,7 @@ function mapping_factor(::Petrov2023, I, pp, ray, up)
     k / sqrt(1 - (R / (R + H + ΔH) * cos(α * e))^2)
 end
 
-# slant TEC (m⁻²) along `ray` and its pierce point pp; the time and the ray origin are checked also below the horizon
+# slant TEC (TECU) along `ray` and its pierce point pp; the time and the ray origin are checked also below the horizon
 function slant_tec(m::GlobalMap, ray, t)
     I = m.ionex
     k = mapindex(I, t)
