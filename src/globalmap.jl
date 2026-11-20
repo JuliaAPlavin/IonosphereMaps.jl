@@ -2,6 +2,11 @@
 struct SLM end
 """CODE modified single-layer mapping (H = 506.7 km, α = 0.9782, R = 6371 km) at the geodetic zenith distance."""
 struct MSLM end
+"""
+Petrov (2023, AJ 165, 183, eq. 12) mapping `k / √(1 − (R/(R + H + ΔH))² cos²(α e))`, k = 0.85, ΔH = 56.7 km,
+α = 0.9782; R and H the map's base radius and shell height, e the geocentric elevation at the ray origin.
+"""
+struct Petrov2023 end
 
 """
     GlobalMap(paths; mapping)
@@ -9,7 +14,9 @@ struct MSLM end
 
 Thin-shell model from IONEX global ionosphere maps: VTEC bilinearly interpolated at the pierce point,
 maps blended in time after rotating each with the Sun (IONEX method 3), also across file boundaries.
-`mapping` (`SLM()` or `MSLM()`) converts VTEC to slant TEC; use the one the maps were produced with.
+`mapping` (`SLM()`, `MSLM()` or `Petrov2023()`) converts VTEC to slant TEC. The files' MAPPING FUNCTION record
+(COSZ or NONE in practice) is not used. CODE produces its maps with MSLM; Petrov2023 is fitted to VLBI astrometry
+and includes its scale factor k = 0.85.
 Pierce points beyond the grid (e.g. past ±87.5° latitude, or outside a regional map), and times outside the maps, are an error.
 A missing map node (9999 or `nan` in IONEX) gives NaN throughout its grid cells.
 
@@ -88,12 +95,17 @@ nan_like(m::GlobalMap, unit) = with_rms(NaN, isnothing(m.ionex.rms) ? nothing : 
 
 ionospheric_tec(m::GlobalMap, v::Vertical, t::DateTime) = vtec(m.ionex, t, rad2deg(NoUnits(v.lat)), rad2deg(NoUnits(v.lon))) * TECU
 
-mapping_factor(::SLM, pp, ray) = norm(pp) / dot(pp, ray.direction)
-mapping_factor(::MSLM, pp, ray) = 1 / sqrt(1 - (6371 / (6371 + 506.7) * sin(0.9782 * acos(dot(ray.direction, geodetic_up(ray.origin)))))^2)
+# mapping from VTEC to slant TEC for `ray`, piercing the shell of the maps `I` at pp
+mapping_factor(::SLM, I, pp, ray) = norm(pp) / dot(pp, ray.direction)
+mapping_factor(::MSLM, I, pp, ray) = 1 / sqrt(1 - (6371 / (6371 + 506.7) * sin(0.9782 * acos(dot(ray.direction, geodetic_up(ray.origin)))))^2)
+function mapping_factor(::Petrov2023, I, pp, ray)
+    e = asin(dot(ray.direction, ray.origin) / norm(ray.origin))
+    0.85 / sqrt(1 - (I.radius / (I.radius + I.height + 56.7u"km") * cos(0.9782 * e))^2)
+end
 
 function slant_tec(m::GlobalMap, ray, t)
     I = m.ionex
     pp = pierce(ray.origin, ray.direction, I.radius + I.height)
     (; lat, lon) = geocentric_latlon(pp)
-    (; stec=vtec(I, t, rad2deg(lat), rad2deg(lon)) * mapping_factor(m.mapping, pp, ray), pp)
+    (; stec=vtec(I, t, rad2deg(lat), rad2deg(lon)) * mapping_factor(m.mapping, I, pp, ray), pp)
 end

@@ -157,6 +157,58 @@ end
     @test_throws AssertionError Ray(SVector(0.0, 6378137.0, 0.0)u"m", SVector(0.0, 1.0, 1.0))
 end
 
+@testitem "Petrov 2023 mapping" begin
+    using Dates, AxisKeys, StaticArrays, Unitful
+    # a map of 1 TECU everywhere: slant TEC in TECU is the mapping factor
+    t = DateTime(2025, 1, 1)
+    uniform(radius, height) = GlobalMap((; tec=KeyedArray(ones(71, 73, 1); lat=87.5:-2.5:-87.5, lon=-180.0:5.0:180.0, epoch=[t]),
+                                           rms=nothing, radius, height), Petrov2023())
+    # from 45°N 0°E on the reference sphere, northward at geocentric elevation e (geodetic elevation 0.19° higher)
+    ray(R, e) = Ray(R * SVector(cosd(45), 0, sind(45)), sind(e) * SVector(cosd(45), 0, sind(45)) + cosd(e) * SVector(-sind(45), 0, cosd(45)))
+    factor(m, R, e) = (@inferred ionospheric_tec(m, ray(R, e), t)) / 1e16u"m^-2"
+    # eq. 12 of the paper in 256-bit BigFloat, outside the package
+    m = uniform(6371.0u"km", 450.0u"km")
+    M = factor.(Ref(m), 6371.0u"km", [90, 45, 30, 20, 15, 10, 5])
+    @test M ≈ [0.850427787832, 1.13966199380, 1.44085829434, 1.74183394892, 1.91520009405, 2.08193646078, 2.20830802078] rtol=1e-11
+    # Fringy's independent implementation, M/k to 3 decimals
+    @test round.(M ./ 0.85; digits=3) == [1.001, 1.341, 1.695, 2.049, 2.253, 2.449, 2.598]
+    # R and H are the map's own
+    @test factor(uniform(6378.137u"km", 350.0u"km"), 6378.137u"km", 10) ≈ 2.25724822057 rtol=1e-11
+end
+
+@testitem "group delay" setup=[Track] begin
+    using Dates, AxisKeys, Uncertain, Unitful
+    t = DateTime(2025, 1, 1)
+    tecu = GlobalMap((; tec=KeyedArray(ones(3, 3, 1); lat=5.0:-5.0:-5.0, lon=-5.0:5.0:5.0, epoch=[t]), rms=nothing,
+                        radius=6371.0u"km", height=450.0u"km"), SLM())
+    # 1 TECU: e²/(8π²ε₀mₑ) · 10¹⁶ m⁻² / (c ν²) in 256-bit BigFloat from CODATA 2018 values (Unitful's ε₀ = 1/(μ₀c²)
+    # with μ₀ = 4π·10⁻⁷ H/m is 5·10⁻¹⁰ off)
+    delay(ν) = @inferred ionospheric_group_delay(tecu, Vertical(0.0, 0.0), t, ν)
+    @test delay(1u"GHz") ≈ 1.344536593446e-9u"s" rtol=1e-9
+    @test delay(15.368u"GHz") ≈ 5.692957254713e-12u"s" rtol=1e-9
+    @test delay(1u"GHz") ≈ 4 * delay(2e9u"Hz") rtol=1e-14
+
+    # end to end at 1.4 GHz: spinifex slant TEC and its RMS at 06:06 (in "RMS maps" above), 20.35420 ± 2.05135 TECU,
+    # times the 1 TECU delay at 1.4 GHz from the same BigFloat evaluation
+    m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"); mapping=SLM())
+    @testset for geometry in Track.GEOMETRIES
+        t = Track.SCANS[1]
+        d = @inferred ionospheric_group_delay(m, geometry(t), t, 1.4u"GHz")
+        @test U.value(d) ≈ 13.962738128e-9u"s" rtol=1e-4
+        @test U.uncertainty(d) ≈ 1.4072016025e-9u"s" rtol=1e-4
+    end
+    @test U.value(@inferred ionospheric_group_delay(m, Vertical(-23.98u"°", 24.26u"°"), DateTime(2025, 7, 25, 6), 1u"GHz")) ≈
+          1.9723225104e-8u"s" rtol=1e-6   # spinifex VTEC there, 14.669162 TECU (in "RMS maps" above)
+
+    # below the horizon, with and without RMS maps
+    d = ionospheric_group_delay(m, Track.LOS, DateTime(2025, 7, 25, 1), 1u"GHz")
+    @test isnan(U.value(d))
+    @test isnan(U.uncertainty(d))
+    m0 = GlobalMap(joinpath(Track.DATA, "codg0600.21i_crop.gz"); mapping=MSLM())
+    @test isnan(@inferred ionospheric_group_delay(m0, Track.LOS, DateTime(2021, 3, 1, 3), 1u"GHz"))
+    @test_throws MethodError ionospheric_group_delay(m, Track.LOS, DateTime(2025, 7, 25, 8), 1e9)
+end
+
 @testitem "grid interpolation: longitude wrap, seam, grid edges, map epochs" begin
     using Dates, AxisKeys
     using IonosphericRM: vtec

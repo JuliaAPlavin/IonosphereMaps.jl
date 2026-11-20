@@ -9,9 +9,9 @@ using SkyCoords: AbstractSkyCoords, ICRSCoords, cartesian
 using SatelliteToolboxGeomagneticField: igrf
 using SatelliteToolboxTransformations: r_eci_to_ecef, J2000, PEF, ecef_to_geodetic, geodetic_to_ecef
 using Uncertain: ±ᵤ
-using Unitful: @u_str, Length, NoUnits, uconvert, ustrip
+using Unitful: @u_str, Frequency, Length, NoUnits, uconvert, ustrip
 
-export ionospheric_rm, ionospheric_tec, Ray, LineOfSight, Vertical, GlobalMap, SLM, MSLM
+export ionospheric_rm, ionospheric_tec, ionospheric_group_delay, Ray, LineOfSight, Vertical, GlobalMap, SLM, MSLM, Petrov2023
 
 """
     Ray(origin, direction)
@@ -72,6 +72,16 @@ function ionospheric_tec(model, ray::Ray, t::DateTime)
     slant_tec(model, ray, t).stec * TECU
 end
 ionospheric_tec(model, los::LineOfSight, t::DateTime) = ionospheric_tec(model, Ray(los, t), t)
+
+"""
+    ionospheric_group_delay(model, geometry, t::DateTime, ν)
+
+Ionospheric group delay (s) at frequency `ν` (Unitful) for any geometry of [`ionospheric_tec`](@ref) at UTC `t`:
+`K·TEC / (c ν²)`, `K = e² / (8π² ε₀ mₑ)`. Positive: the group is delayed, the phase advanced by the same amount
+(phase delay `-K·TEC / (c ν²)`). NaN below the horizon, and `delay ±ᵤ σ` for maps with RMS maps, as for TEC.
+"""
+ionospheric_group_delay(model, geometry, t::DateTime, ν::Frequency) =
+    uconvert(u"s", K_ION * ionospheric_tec(model, geometry, t) / (u"c" * ν^2))
 
 """
     ionospheric_rm(model, geometry, t::DateTime)
