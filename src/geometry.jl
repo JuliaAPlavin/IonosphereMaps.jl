@@ -2,16 +2,16 @@
 const K_RM = u"q"^3 / (8π^2 * u"ε0" * u"me"^2 * u"c"^3)
 const TECU = 1e16u"m^-2"
 
-const WGS84 = (; a=6378137.0u"m", f=1 / 298.257223563)
+# geodetic WGS84 site → ECEF; the library takes plain metres
+ecef(site) = geodetic_to_ecef(site.lat, site.lon, ustrip(u"m", site.h)) * u"m"
 
-function ecef(site)
-    (; lat, lon, h) = site
-    e2 = WGS84.f * (2 - WGS84.f)
-    N = WGS84.a / sqrt(1 - e2 * sin(lat)^2)
-    SVector((N + h) * cos(lat) * cos(lon), (N + h) * cos(lat) * sin(lon), (N * (1 - e2) + h) * sin(lat))
+# WGS84 ellipsoid normal through the ECEF position x
+function geodetic_up(x)
+    (lat, lon) = ecef_to_geodetic(ustrip.(u"m", x))
+    SVector(cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat))
 end
 
-up(site) = SVector(cos(site.lat) * cos(site.lon), cos(site.lat) * sin(site.lon), sin(site.lat))
+above_horizon(ray) = dot(ray.direction, geodetic_up(ray.origin)) > 0
 
 geocentric_latlon(x) = (; lat=asin(x[3] / norm(x)), lon=atan(x[2], x[1]))
 

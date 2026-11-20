@@ -88,12 +88,12 @@ nan_like(m::GlobalMap, unit) = with_rms(NaN, isnothing(m.ionex.rms) ? nothing : 
 
 ionospheric_tec(m::GlobalMap, v::Vertical, t::DateTime) = vtec(m.ionex, t, rad2deg(NoUnits(v.lat)), rad2deg(NoUnits(v.lon))) * TECU
 
-mapping_factor(::SLM, pp, k, site) = norm(pp) / dot(pp, k)
-mapping_factor(::MSLM, pp, k, site) = 1 / sqrt(1 - (6371 / (6371 + 506.7) * sin(0.9782 * acos(dot(k, up(site)))))^2)
+mapping_factor(::SLM, pp, ray) = norm(pp) / dot(pp, ray.direction)
+mapping_factor(::MSLM, pp, ray) = 1 / sqrt(1 - (6371 / (6371 + 506.7) * sin(0.9782 * acos(dot(ray.direction, geodetic_up(ray.origin)))))^2)
 
-function slant_tec(m::GlobalMap, site, k, t)
+function slant_tec(m::GlobalMap, ray, t)
     I = m.ionex
-    pp = pierce(ecef(site), k, I.radius + I.height)
+    pp = pierce(ray.origin, ray.direction, I.radius + I.height)
     (; lat, lon) = geocentric_latlon(pp)
-    (; stec=vtec(I, t, rad2deg(lat), rad2deg(lon)) * mapping_factor(m.mapping, pp, k, site), pp)
+    (; stec=vtec(I, t, rad2deg(lat), rad2deg(lon)) * mapping_factor(m.mapping, pp, ray), pp)
 end

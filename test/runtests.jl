@@ -4,22 +4,26 @@ using TestItemRunner
 
 @testmodule Track begin
     using Dates, SkyCoords, Unitful, IonosphericRM
+    using IonosphericRM: ecef, source_direction
     # MeerKAT array centre and 3C138 (J2000); MeerKAT 2025-07-25 scan mid-times (UTC)
     const DATA = joinpath(@__DIR__, "data")
     const SITE = (; lat=-30.71292u"°", lon=21.44380u"°", h=1050.0u"m")
     const SRC = ICRSCoords(deg2rad(15 * (5 + 21/60 + 9.886/3600)), deg2rad(16 + 38/60 + 22.05/3600))
     const SCANS = DateTime(2025, 7, 25) .+ Minute.([366, 386, 403, 424, 441, 462, 479, 500, 517, 537, 555, 574, 593, 612])
     const LOS = LineOfSight(SITE, SRC)
+    # the same line of sight as an Earth-fixed ray, at time t
+    ray(t) = Ray(ecef(SITE), source_direction(SRC, t))
+    const GEOMETRIES = [Returns(LOS), ray]
 end
 
 @testitem "constants and geometry" setup=[Track] begin
-    using IonosphericRM: K_RM, ecef, up, pierce, source_direction
+    using IonosphericRM: K_RM, ecef, geodetic_up, pierce, source_direction
     using LinearAlgebra, Dates, SkyCoords, Unitful
     @test K_RM * 1u"m^-2" * 1u"T" ≈ 2.6312e-13u"rad/m^2" rtol=1e-4
     o = ecef(Track.SITE)
     @test pierce(o, normalize(o), 6821u"km") ≈ 6821u"km" * normalize(o)
     # 3C138 elevation, astropy (via spinifex) reference: 37.08263° at 06:06, 30.659° (ALBUS) at 10:12
-    el(t) = rad2deg(asin(dot(source_direction(Track.SRC, t), up(Track.SITE))))
+    el(t) = rad2deg(asin(dot(source_direction(Track.SRC, t), geodetic_up(ecef(Track.SITE)))))
     @test el(Track.SCANS[1]) ≈ 37.0826 atol=0.01
     @test el(Track.SCANS[end]) ≈ 30.659 atol=0.02
     # Earth-fixed direction, SOFA c2t06a (IAU 2006/2000A, no polar motion, UT1 = UTC); also near the celestial poles
@@ -38,8 +42,10 @@ end
     # independently verified calculator (vs spinifex 2.0 and AIPS TECOR), CODE final GIM 2025-206
     slm = [-1.0456, -1.1890, -1.3138, -1.4600, -1.5775, -1.7246, -1.8365, -2.0016, -2.1344, -2.2655, -2.3375, -2.4113, -2.4826, -2.5611]u"rad/m^2"
     mslm = [-1.0184, -1.1611, -1.2851, -1.4303, -1.5465, -1.6913, -1.8009, -1.9613, -2.0891, -2.2135, -2.2788, -2.3440, -2.4047, -2.4701]u"rad/m^2"
-    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=SLM())), Ref(Track.LOS), Track.SCANS)) ≈ slm atol=3e-4u"rad/m^2"   # norm over the 14 scans; references to 1e-4, sky direction 7″ off ours
-    @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=MSLM())), Ref(Track.LOS), Track.SCANS)) ≈ mslm atol=3e-4u"rad/m^2"
+    @testset for geometry in Track.GEOMETRIES
+        @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=SLM())), geometry.(Track.SCANS), Track.SCANS)) ≈ slm atol=3e-4u"rad/m^2"   # norm over the 14 scans; references to 1e-4, sky direction 7″ off ours
+        @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=MSLM())), geometry.(Track.SCANS), Track.SCANS)) ≈ mslm atol=3e-4u"rad/m^2"
+    end
     # circumpolar source, time outside the map epochs
     @test_throws DomainError ionospheric_rm(GlobalMap(path; mapping=MSLM()), LineOfSight(Track.SITE, ICRSCoords(0.0, -1.2)), DateTime(2025, 7, 25, 20))
     # any sky frame: 3C138 in galactic coordinates
@@ -94,10 +100,13 @@ end
     # spinifex 2.0 get_rm_from_skycoord, single layer at 450 km (= SLM): RM and the TEC part of its error, |K·RMS·M·B∥|,
     # rescaled from its rounded constant 2.62e-6 to K_RM
     m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"); mapping=SLM())
-    rm = [ionospheric_rm(m, Track.LOS, t) for t in DateTime(2025, 7, 25) .+ Minute.([366, 480, 612])]
-    @test U.value.(rm) ≈ [-1.045650, -1.843167, -2.561181]u"rad/m^2" atol=3e-4u"rad/m^2"
-    @test U.uncertainty.(rm) ≈ [0.105383, 0.106252, 0.136799]u"rad/m^2" atol=3e-5u"rad/m^2"
-    @test (@inferred ionospheric_rm(m, Track.LOS, DateTime(2025, 7, 25, 8))) isa Uncertain.Value
+    @testset for geometry in Track.GEOMETRIES
+        rm = [ionospheric_rm(m, geometry(t), t) for t in DateTime(2025, 7, 25) .+ Minute.([366, 480, 612])]
+        @test U.value.(rm) ≈ [-1.045650, -1.843167, -2.561181]u"rad/m^2" atol=3e-4u"rad/m^2"
+        @test U.uncertainty.(rm) ≈ [0.105383, 0.106252, 0.136799]u"rad/m^2" atol=3e-5u"rad/m^2"
+        t = DateTime(2025, 7, 25, 8)
+        @test (@inferred ionospheric_rm(m, geometry(t), t)) isa Uncertain.Value
+    end
 
     # TEC through the public interface, in m⁻²: vertical at a shell point (from the spinifex values above),
     # and slant along the line of sight (spinifex VTEC and RMS × its airmass at the same three times;
@@ -106,10 +115,46 @@ end
     @test U.value(v) ≈ 14.669162e16u"m^-2" rtol=1e-6
     @test U.uncertainty(v) ≈ 1.314800e16u"m^-2" rtol=1e-6
     @test U.value(ionospheric_tec(m, Vertical(deg2rad(-23.98), deg2rad(24.26)), DateTime(2025, 7, 25, 6))) == U.value(v)
-    s = [ionospheric_tec(m, Track.LOS, t) for t in DateTime(2025, 7, 25) .+ Minute.([366, 480, 612])]
-    @test U.value.(s) ≈ [20.35420, 31.72016, 49.29405]u"m^-2" .* 1e16 rtol=1e-4
-    @test U.uncertainty.(s) ≈ [2.05135, 1.82856, 2.63291]u"m^-2" .* 1e16 rtol=1e-4
+    @testset for geometry in Track.GEOMETRIES
+        s = [ionospheric_tec(m, geometry(t), t) for t in DateTime(2025, 7, 25) .+ Minute.([366, 480, 612])]
+        @test U.value.(s) ≈ [20.35420, 31.72016, 49.29405]u"m^-2" .* 1e16 rtol=1e-4
+        @test U.uncertainty.(s) ≈ [2.05135, 1.82856, 2.63291]u"m^-2" .* 1e16 rtol=1e-4
+        t = DateTime(2025, 7, 25, 8)
+        @test (@inferred ionospheric_tec(m, geometry(t), t)) isa Uncertain.Value
+    end
     @test ionospheric_tec(GlobalMap(joinpath(Track.DATA, "codg0600.21i_crop.gz"); mapping=MSLM()), Vertical(-30.0u"°", 21.0u"°"), DateTime(2021, 3, 1, 3)) isa Unitful.Quantity
+end
+
+@testitem "Ray: vertical at a grid node, geodetic horizon, construction" setup=[Track] begin
+    using Dates, StaticArrays, Uncertain, Unitful
+    # from the WGS84 equator at 90°E straight up: pierces the shell at the grid node 0°N 90°E;
+    # its VTEC and RMS in the 06:00 maps of the file are 719 and 25 (× 0.1 TECU)
+    m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_seam.INX.gz"); mapping=SLM())
+    v = @inferred ionospheric_tec(m, Ray(SVector(0.0, 6378137.0, 0.0)u"m", SVector(0.0, 1.0, 0.0)), DateTime(2025, 7, 25, 6))
+    @test U.value(v) == 71.9e16u"m^-2"
+    @test U.uncertainty(v) == 2.5e16u"m^-2"
+
+    # at MeerKAT, toward the north at -0.05° geodetic elevation: below the geodetic horizon,
+    # above the geocentric one (+0.12°)
+    lat, lon = -30.71292u"°", 21.44380u"°"
+    up = SVector(cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat))
+    north = SVector(-sin(lat) * cos(lon), -sin(lat) * sin(lon), cos(lat))
+    ray = Ray(SVector(5109235.683, 2006794.555, -3239107.175)u"m", cosd(-0.05) * north + sind(-0.05) * up)
+    t = DateTime(2025, 7, 25, 8)
+    @testset for mapping in [SLM(), MSLM()]
+        m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"); mapping)
+        @test isnan(U.value(@inferred ionospheric_tec(m, ray, t)))
+        @test isnan(U.uncertainty(ionospheric_tec(m, ray, t)))
+        @test isnan(U.value(@inferred ionospheric_rm(m, ray, t)))
+        @test isnan(U.uncertainty(ionospheric_rm(m, ray, t)))
+        m0 = GlobalMap(joinpath(Track.DATA, "codg0600.21i_crop.gz"); mapping)
+        @test isnan(@inferred ionospheric_tec(m0, ray, DateTime(2021, 3, 1, 3)))
+        @test isnan(@inferred ionospheric_rm(m0, ray, DateTime(2021, 3, 1, 3)))
+    end
+
+    # an ECEF origin with length units, a unit direction
+    @test_throws MethodError Ray(SVector(0.0, 6378137.0, 0.0), SVector(0.0, 1.0, 0.0))
+    @test_throws AssertionError Ray(SVector(0.0, 6378137.0, 0.0)u"m", SVector(0.0, 1.0, 1.0))
 end
 
 @testitem "grid interpolation: longitude wrap, seam, grid edges, map epochs" begin
