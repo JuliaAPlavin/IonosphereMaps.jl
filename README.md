@@ -1,11 +1,13 @@
 # IonosphereMaps.jl
 
-Ionospheric slant TEC, Faraday rotation measure and group delay along a line of sight, and the maps' own vertical TEC,
-from IONEX global ionosphere maps (GIMs) in the thin-shell model.
+<!-- animation: examples/globe.jl, user-attachments URL -->
+
+Ionosphere along lines of sight, from IONEX global maps.
 
 ```julia
 using IonosphereMaps, Dates, SkyCoords, Unitful
 
+# CODE daily maps from https://download.aiub.unibe.ch/CODE/2025/: two days, the observation runs past midnight
 m = GlobalMap(["COD0OPSFIN_20250260000_01D_01H_GIM.INX.gz", "COD0OPSFIN_20250270000_01D_01H_GIM.INX.gz"]; mapping=MSLM())
 site = (; lat=-30.71292u"°", lon=21.44380u"°", h=1050u"m")                 # MeerKAT
 los = LineOfSight(site, ICRSCoords(80.29119u"°", 16.63946u"°"))  # 3C138
@@ -21,6 +23,10 @@ vtec(m, (; lat=-30u"°", lon=21u"°"), t)         # 16.39 TECU ±ᵤ 2.21 TECU
 
 `GlobalMap(paths; mapping)` reads IONEX files (plain, `.gz`, or `.Z`):
 2-D TEC maps, and their RMS maps when present.
+IONEX global maps are published daily by GNSS analysis centres, e.g. CODE.
+Several files are consecutive periods in time order, e.g. daily files across midnight; where they overlap, the later file's maps are used.
+
+The ionosphere is a thin shell at the maps' height.
 VTEC at the pierce point of the shell is interpolated bilinearly in each map, and in time between maps rotated with the Sun (so-called IONEX method 3).
 
 Geometries:
@@ -37,6 +43,8 @@ Slant TEC is VTEC times the mapping factor. Available mappings:
 Convenience computation functions:
 - RM is `K·TEC·B∥` with the IGRF field at the pierce point,
 - group delay is `K·TEC / (c ν²)` at the cyclic frequency `ν`.
+
+Tested against spinifex 2.0 and AIPS TECOR.
 
 ## Uncertainties
 
