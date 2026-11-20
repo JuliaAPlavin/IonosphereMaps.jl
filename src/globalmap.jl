@@ -26,7 +26,7 @@ there the pole is a node valued the mean of that row, and a point in the cap ble
 interpolated in longitude, and the pole.
 For a regional map, the rotation with the Sun can move a point inside the grid outside it near the east and west edges
 between map epochs: also an error.
-A missing map node (9999 or `nan` in IONEX) gives NaN throughout its grid cells.
+A missing map node (9999 or `nan` in IONEX) gives NaN wherever it enters the interpolation.
 
 `paths` are files of consecutive periods in time order, e.g. the daily files of an observation crossing
 midnight. They must share grid, base radius, shell height and mapping function, with gaps of at most one map interval.

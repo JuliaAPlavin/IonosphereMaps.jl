@@ -299,6 +299,10 @@ end
         @test U.uncertainty.(v) ≈ [σ for (_, (_, σ)) in cases] .* TECU rtol=1e-12
         @test_throws DomainError vtec(m, 90.5°, 0.0°, t)
     end
+    # a missing node in the outermost row: NaN throughout its cap, the rest of the map unaffected
+    holed = gmap([NaN 2 3 6; tec[2:end, :]], rms, 60.0:-30.0:-60.0, -180.0:90.0:90.0)
+    @test isnan(U.value(vtec(holed, 89.0°, 45.0°, t)))
+    @test U.value.([vtec(holed, 45.0°, 45.0°, t), vtec(holed, -70.0°, 112.5°, t)]) ≈ [5.75, 30] .* TECU rtol=1e-12
     # beyond the grid otherwise: not all longitudes, or the outermost row not one step from the pole
     @test_throws DomainError vtec(gmap(tec[:, 1:3], rms[:, 1:3], 60.0:-30.0:-60.0, -180.0:90.0:0.0), 75.0°, -135.0°, t)
     @test_throws DomainError vtec(gmap(tec, rms, 50.0:-25.0:-50.0, -180.0:90.0:90.0), 60.0°, 0.0°, t)
@@ -550,9 +554,25 @@ end
     end
 end
 
+@testitem "type stability of the public entry points" setup=[Track] begin
+    using Dates, Uncertain, Unitful
+    # with RMS maps (CODE 2025-07-25, 03–13 h) and without (CODE 2021-03-01, 0–6 h); 3C138 up at the first time, down at the second
+    @testset for (file, t, T) in [("COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz", DateTime(2025, 7, 25, 8), Uncertain.Value),
+                                  ("codg0600.21i_crop.gz", DateTime(2021, 3, 1, 3), Unitful.Quantity)],
+                 mapping in [SLM(), MSLM(), Petrov2023()], geometry in Track.GEOMETRIES
+        m = GlobalMap(joinpath(Track.DATA, file); mapping)
+        @test (@inferred Ray(Track.LOS, t)) isa Ray
+        @test (@inferred ionospheric_tec(m, geometry(t), t)) isa T
+        @test (@inferred ionospheric_rm(m, geometry(t), t)) isa T
+        @test (@inferred ionospheric_group_delay(m, geometry(t), t, 1.4u"GHz")) isa T
+        @test (@inferred vtec(m, -30.0u"°", 21.0u"°", t)) isa T
+        @test (@inferred vtec(m, deg2rad(-30.0), deg2rad(21.0), t)) isa T
+    end
+end
+
 @testitem "package quality: Aqua, compat bounds" begin
     import Aqua
-    Aqua.test_all(IonosphericRM)
+    Aqua.test_all(IonosphericRM; undocumented_names=true)   # docstrings checked on Julia ≥ 1.11
 
     import CompatHelperLocal as CHL
     CHL.@check()

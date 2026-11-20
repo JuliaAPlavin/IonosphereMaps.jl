@@ -76,8 +76,9 @@ ionospheric_group_delay(model, geometry, t::DateTime, ν::Frequency) =
 """
     ionospheric_rm(model, geometry, t::DateTime)
 
-Ionospheric Faraday rotation measure (rad/m²) along a `Ray` or `LineOfSight` at UTC `t`; positive when the field
-along the line of sight points toward the observer, NaN below the geodetic horizon of the ray origin.
+Ionospheric Faraday rotation measure (rad/m²) along a `Ray` or `LineOfSight` at UTC `t`: `K·TEC·B∥`,
+`K = e³ / (8π² ε₀ mₑ² c³)`, TEC from [`ionospheric_tec`](@ref), B∥ the IGRF field at the pierce point along the line of sight.
+Positive when that field points toward the observer, NaN below the geodetic horizon of the ray origin.
 For maps with RMS maps, returns `rm ±ᵤ σ` (`Uncertain.Value`); σ covers the map RMS only, not the thin-shell
 and mapping approximations or the field model.
 """
