@@ -17,8 +17,9 @@ above_horizon(ray) = dot(ray.direction, geodetic_up(ray.origin)) > 0
 
 geocentric_latlon(x) = (; lat=asin(x[3] / norm(x)), lon=atan(x[2], x[1]))
 
-# point where the ray o + s·k (s > 0) crosses the sphere |x| = r
+# point where the ray o + s·k (s > 0) from inside the sphere |x| = r crosses it
 function pierce(o, k, r)
+    norm(o) < r || throw(DomainError(norm(o), "ray origin distance from the geocentre, at or above the ionospheric shell of radius $r"))
     b = dot(o, k)
     o + (-b + sqrt(b^2 - (dot(o, o) - r^2))) * k
 end

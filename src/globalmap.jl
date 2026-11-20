@@ -1,6 +1,9 @@
 """Single-layer mapping at the IONEX shell height: exact 1/cos z′ at the pierce point."""
 struct SLM end
-"""CODE modified single-layer mapping (H = 506.7 km, α = 0.9782, R = 6371 km) at the geodetic zenith distance."""
+"""
+CODE modified single-layer mapping `1 / √(1 − (R/(R + H))² sin²(α z))`, H = 506.7 km, α = 0.9782, R = 6371 km,
+z the geodetic zenith distance at the ray origin.
+"""
 struct MSLM end
 """
 Petrov (2023, AJ 165, 183, eq. 12) mapping `k / √(1 − (R/(R + H + ΔH))² cos²(α e))`, k = 0.85, ΔH = 56.7 km,
@@ -15,9 +18,11 @@ struct Petrov2023 end
 Thin-shell model from IONEX global ionosphere maps: VTEC bilinearly interpolated at the pierce point,
 maps blended in time after rotating each with the Sun (IONEX method 3), also across file boundaries.
 `mapping` (`SLM()`, `MSLM()` or `Petrov2023()`) converts VTEC to slant TEC. The files' MAPPING FUNCTION record
-(COSZ or NONE in practice) is not used. CODE produces its maps with MSLM; Petrov2023 is fitted to VLBI astrometry
-and includes its scale factor k = 0.85.
+(COSZ or NONE in practice) is used only to check that joined files agree. CODE produces its maps with MSLM;
+Petrov2023 is fitted to VLBI astrometry and includes its scale factor k = 0.85.
 Pierce points beyond the grid (e.g. past ±87.5° latitude, or outside a regional map), and times outside the maps, are an error.
+For a regional map, the rotation with the Sun can move a point inside the grid outside it near the east and west edges
+between map epochs: also an error.
 A missing map node (9999 or `nan` in IONEX) gives NaN throughout its grid cells.
 
 `paths` are files of consecutive periods in time order, e.g. the daily files of an observation crossing
@@ -44,7 +49,7 @@ function append_ionex(a, b)
     # interpolating across the junction is no coarser than within either file
     spacing = maximum(e -> maximum(diff(e); init=Millisecond(0)), (ea, eb))
     first(eb) - last(ea) <= spacing ||
-        throw(ArgumentError("gap between IONEX files: $(last(ea)) to $(first(eb)), maps are $spacing apart"))
+        throw(ArgumentError("gap between IONEX files: $(last(ea)) to $(first(eb)), longer than any map interval within them"))
     (; a..., tec=catmaps(a.tec, b.tec), rms=catmaps(a.rms, b.rms))
 end
 catmaps(A, B) = cat(A(epoch=<(first(axiskeys(B, :epoch)))), B; dims=3)
@@ -64,48 +69,66 @@ function bilinear(M, lat, lon)
     # a full circle without a repeated end column closes on its first column;
     # either side of a repeated (e.g. ±180) column interpolates from its own copy
     mlons = axiskeys(M, :lon)
-    closed = length(mlons) * step(mlons) ≈ 360
+    closed = length(mlons) * step(mlons) ≈ 360u"°"
     lons = range(first(mlons); step=step(mlons), length=length(mlons) + closed)
-    (j, q) = gridcell(lons, first(lons) + mod(lon - first(lons), 360))
+    (j, q) = gridcell(lons, first(lons) + mod(lon - first(lons), 360u"°"))
     j1 = mod1(j + 1, length(mlons))
     (1-p)*(1-q)*M[i,j] + p*(1-q)*M[i+1,j] + (1-p)*q*M[i,j1] + p*q*M[i+1,j1]
 end
 
-# maps A[lat, lon, epoch] at t; lat, lon in degrees (geocentric)
-function interpolate(A, t, lat, lon)
-    epochs = axiskeys(A, :epoch)
+# index k of the map interval Tₖ ≤ t < Tₖ₊₁ of the maps I, or of the last map at its epoch
+function mapindex(I, t)
+    epochs = axiskeys(I.tec, :epoch)
     first(epochs) <= t <= last(epochs) || throw(DomainError(t, "outside the IONEX maps $(first(epochs)) to $(last(epochs))"))
-    k = searchsortedlast(epochs, t)
+    searchsortedlast(epochs, t)
+end
+
+# maps A[lat, lon, epoch] at t in the interval k; lat, lon in degrees (geocentric)
+function interpolate(A, t, k, lat, lon)
+    epochs = axiskeys(A, :epoch)
     t == epochs[k] && return bilinear(view(A, :, :, k), lat, lon)
     w = (t - epochs[k]) /ₜ (epochs[k+1] - epochs[k])
-    e0 = bilinear(view(A, :, :, k), lat, lon + 360 * ((t - epochs[k]) /ₜ Day))
-    e1 = bilinear(view(A, :, :, k+1), lat, lon + 360 * ((t - epochs[k+1]) /ₜ Day))
+    e0 = bilinear(view(A, :, :, k), lat, lon + 360u"°" * ((t - epochs[k]) /ₜ Day))
+    e1 = bilinear(view(A, :, :, k+1), lat, lon + 360u"°" * ((t - epochs[k+1]) /ₜ Day))
     (1 - w) * e0 + w * e1
 end
-interpolate(::Nothing, t, lat, lon) = nothing
+interpolate(::Nothing, t, k, lat, lon) = nothing
 
-# VTEC (TECU), ± its RMS where the file has RMS maps. RMS is interpolated with the TEC weights:
-# errors at neighbouring nodes of a smooth map are close to fully correlated.
-vtec(I, t, lat, lon) = with_rms(interpolate(I.tec, t, lat, lon), interpolate(I.rms, t, lat, lon))
+# VTEC (TECU), ± its RMS where the file has RMS maps, at geocentric lat, lon (Unitful, or plain radians).
+# RMS is interpolated with the TEC weights: errors at neighbouring nodes of a smooth map are close to fully correlated.
+vtec(I, t, lat, lon) = vtec(I, t, mapindex(I, t), lat, lon)
+function vtec(I, t, k, lat, lon)
+    lat, lon = uconvert(u"°", lat), uconvert(u"°", lon)
+    with_rms(interpolate(I.tec, t, k, lat, lon), interpolate(I.rms, t, k, lat, lon))
+end
 with_rms(v, σ) = v ±ᵤ σ
 with_rms(v, ::Nothing) = v
 
-# below the horizon: NaN of the type a computed value in `unit` has
-nan_like(m::GlobalMap, unit) = with_rms(NaN, isnothing(m.ionex.rms) ? nothing : NaN) * unit
+# below the horizon: NaN of the type VTEC has with these RMS maps
+nan_like(::Nothing) = NaN
+nan_like(rms::AbstractArray) = NaN ±ᵤ NaN
 
-ionospheric_tec(m::GlobalMap, v::Vertical, t::DateTime) = vtec(m.ionex, t, rad2deg(NoUnits(v.lat)), rad2deg(NoUnits(v.lon))) * TECU
+ionospheric_tec(m::GlobalMap, v::Vertical, t::DateTime) = vtec(m.ionex, t, v.lat, v.lon) * TECU
 
 # mapping from VTEC to slant TEC for `ray`, piercing the shell of the maps `I` at pp
 mapping_factor(::SLM, I, pp, ray) = norm(pp) / dot(pp, ray.direction)
-mapping_factor(::MSLM, I, pp, ray) = 1 / sqrt(1 - (6371 / (6371 + 506.7) * sin(0.9782 * acos(dot(ray.direction, geodetic_up(ray.origin)))))^2)
+function mapping_factor(::MSLM, I, pp, ray)
+    R, H, α = 6371u"km", 506.7u"km", 0.9782
+    z = acos(dot(ray.direction, geodetic_up(ray.origin)))
+    1 / sqrt(1 - (R / (R + H) * sin(α * z))^2)
+end
 function mapping_factor(::Petrov2023, I, pp, ray)
+    k, ΔH, α = 0.85, 56.7u"km", 0.9782
+    R, H = I.radius, I.height
     e = asin(dot(ray.direction, ray.origin) / norm(ray.origin))
-    0.85 / sqrt(1 - (I.radius / (I.radius + I.height + 56.7u"km") * cos(0.9782 * e))^2)
+    k / sqrt(1 - (R / (R + H + ΔH) * cos(α * e))^2)
 end
 
+# slant TEC (TECU) along `ray` and its pierce point pp; the time and the ray origin are checked also below the horizon
 function slant_tec(m::GlobalMap, ray, t)
     I = m.ionex
+    k = mapindex(I, t)
     pp = pierce(ray.origin, ray.direction, I.radius + I.height)
-    (; lat, lon) = geocentric_latlon(pp)
-    (; stec=vtec(I, t, rad2deg(lat), rad2deg(lon)) * mapping_factor(m.mapping, I, pp, ray), pp)
+    stec = above_horizon(ray) ? vtec(I, t, k, geocentric_latlon(pp)...) * mapping_factor(m.mapping, I, pp, ray) : nan_like(I.rms)
+    (; stec, pp)
 end

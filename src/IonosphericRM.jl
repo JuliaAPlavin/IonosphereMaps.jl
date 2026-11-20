@@ -9,7 +9,7 @@ using SkyCoords: AbstractSkyCoords, ICRSCoords, cartesian
 using SatelliteToolboxGeomagneticField: igrf
 using SatelliteToolboxTransformations: r_eci_to_ecef, J2000, PEF, ecef_to_geodetic, geodetic_to_ecef
 using Uncertain: ±ᵤ
-using Unitful: @u_str, Frequency, Length, NoUnits, uconvert, ustrip
+using Unitful: @u_str, Frequency, Length, uconvert, ustrip
 
 export ionospheric_rm, ionospheric_tec, ionospheric_group_delay, Ray, LineOfSight, Vertical, GlobalMap, SLM, MSLM, Petrov2023
 
@@ -17,7 +17,8 @@ export ionospheric_rm, ionospheric_tec, ionospheric_group_delay, Ray, LineOfSigh
     Ray(origin, direction)
 
 From `origin`, an Earth-fixed (ECEF, ITRF/WGS84) position as an `SVector{3}` of Unitful lengths,
-along `direction`, an Earth-fixed unit `SVector{3}`.
+along `direction`, an Earth-fixed unit `SVector{3}`. The origin must be inside the model's ionospheric shell:
+an origin at or above it is an error.
 
     Ray(los::LineOfSight, t::DateTime)
 
@@ -67,16 +68,14 @@ Ionospheric total electron content (m⁻²) at UTC `t`: vertical for `Vertical`,
 (NaN below the geodetic horizon of the ray origin). For maps with RMS maps, returns `tec ±ᵤ σ` (`Uncertain.Value`),
 σ from the map RMS.
 """
-function ionospheric_tec(model, ray::Ray, t::DateTime)
-    above_horizon(ray) || return nan_like(model, TECU)
-    slant_tec(model, ray, t).stec * TECU
-end
+ionospheric_tec(model, ray::Ray, t::DateTime) = slant_tec(model, ray, t).stec * TECU
 ionospheric_tec(model, los::LineOfSight, t::DateTime) = ionospheric_tec(model, Ray(los, t), t)
 
 """
     ionospheric_group_delay(model, geometry, t::DateTime, ν)
 
-Ionospheric group delay (s) at frequency `ν` (Unitful) for any geometry of [`ionospheric_tec`](@ref) at UTC `t`:
+Ionospheric group delay (s) at the cyclic frequency `ν` (Unitful, e.g. `GHz`; an angular frequency in rad/s has the same
+Unitful dimension and silently gives a 4π² smaller delay) for any geometry of [`ionospheric_tec`](@ref) at UTC `t`:
 `K·TEC / (c ν²)`, `K = e² / (8π² ε₀ mₑ)`. Positive: the group is delayed, the phase advanced by the same amount
 (phase delay `-K·TEC / (c ν²)`). NaN below the horizon, and `delay ±ᵤ σ` for maps with RMS maps, as for TEC.
 """
@@ -92,7 +91,6 @@ For maps with RMS maps, returns `rm ±ᵤ σ` (`Uncertain.Value`); σ covers the
 and mapping approximations or the field model.
 """
 function ionospheric_rm(model, ray::Ray, t::DateTime)
-    above_horizon(ray) || return nan_like(model, u"rad/m^2")
     (; stec, pp) = slant_tec(model, ray, t)
     uconvert(u"rad/m^2", K_RM * stec * TECU * bpar(pp, ray.direction, t))
 end
