@@ -3,8 +3,8 @@ using TestItemRunner
 @run_package_tests
 
 @testmodule Track begin
-    using Dates, SkyCoords, Unitful, IonosphericRM
-    using IonosphericRM: ecef, source_direction
+    using Dates, SkyCoords, Unitful, IonosphereMaps
+    using IonosphereMaps: ecef, source_direction
     # MeerKAT array centre and 3C138 (J2000); MeerKAT 2025-07-25 scan mid-times (UTC)
     const DATA = joinpath(@__DIR__, "data")
     const SITE = (; lat=-30.71292u"°", lon=21.44380u"°", h=1050.0u"m")
@@ -18,7 +18,7 @@ using TestItemRunner
 end
 
 @testitem "constants and geometry" setup=[Track] begin
-    using IonosphericRM: K_RM, ecef, geodetic_up, pierce, source_direction
+    using IonosphereMaps: K_RM, ecef, geodetic_up, pierce, source_direction
     using LinearAlgebra, Dates, SkyCoords, Unitful
     @test K_RM * 1u"m^-2" * 1u"T" ≈ 2.6312e-13u"rad/m^2" rtol=1e-4
     o = ecef(Track.SITE)
@@ -214,7 +214,7 @@ end
 
 @testitem "mapping factors at the zenith" begin
     using Dates, AxisKeys, LinearAlgebra, StaticArrays, Unitful
-    using IonosphericRM: ecef
+    using IonosphereMaps: ecef
     # a map of 1 TECU everywhere: slant TEC in TECU is the mapping factor
     t = DateTime(2025, 1, 1)
     uniform = (; tec=KeyedArray(ones(71, 73, 1); lat=(87.5:-2.5:-87.5)u"°", lon=(-180.0:5.0:180.0)u"°", epoch=[t]),
@@ -322,7 +322,7 @@ end
 @testitem "grid interpolation: polar caps" setup=[Track] begin
     using Dates, AxisKeys, StaticArrays, Uncertain
     using Unitful: @u_str, °
-    using IonosphericRM: ecef
+    using IonosphereMaps: ecef
     using .Track: TECU
     t = DateTime(2025, 1, 1)
     # rows at 60, 30, 0, -30, -60°, columns at -180, -90, 0, 90°; ring means: TEC 3 (north), 25 (south), RMS 2 (north)
@@ -392,7 +392,7 @@ end
 end
 
 @testitem "gzip, unix compress and plain files read alike" setup=[Track] begin
-    using IonosphericRM: read_ionex
+    using IonosphereMaps: read_ionex
     using Gzip_jll: gzip
     gz, Z = joinpath.(Track.DATA, ["codg0590.21i_crop.gz", "codg0590.21i_crop.Z"])
     plain = tempname()
@@ -449,7 +449,7 @@ end
 
 @testitem "IONEX records: fixed-width fields, record order, completeness, missing values" setup=[Track] begin
     using Dates, AxisKeys, Unitful
-    using IonosphericRM: read_ionex, headerlabel
+    using IonosphereMaps: read_ionex, headerlabel
     using Gzip_jll: gzip
     day59, day60, day60e2, day60e3 = joinpath.(Track.DATA, ["codg0590.21i_crop.gz", "codg0600.21i_crop.gz", "codg0600.21i_crop_exp2.gz", "codg0600.21i_crop_exp3.gz"])
     ref = read_ionex(day60)
@@ -547,7 +547,7 @@ end
 @testitem "IONEX records: `nan` as a missing value" setup=[Track] begin
     using Dates, Uncertain
     using Unitful: °
-    using IonosphericRM: read_ionex
+    using IonosphereMaps: read_ionex
     using Gzip_jll: gzip
     using .Track: TECU
     # UQRG 2022-02-20, maps 06:30–07:00 on 50–40°N, 25–45°E; the 06:45 RMS map has `nan` at 45°N 35°E
@@ -598,7 +598,7 @@ end
 
 @testitem "multi-day maps: incompatible or non-consecutive files" setup=[Track] begin
     using Dates, AxisKeys, Unitful
-    using IonosphericRM: read_ionex, append_ionex
+    using IonosphereMaps: read_ionex, append_ionex
     day59, day60 = joinpath.(Track.DATA, ["codg0590.21i_crop.gz", "codg0600.21i_crop.gz"])
     @test_throws ArgumentError GlobalMap([day60, day59]; mapping=MSLM())
     @test_throws ArgumentError GlobalMap([day59, day59]; mapping=MSLM())
@@ -646,7 +646,7 @@ end
 
 @testitem "package quality: Aqua, compat bounds" begin
     import Aqua
-    Aqua.test_all(IonosphericRM; undocumented_names=true)   # docstrings checked on Julia ≥ 1.11
+    Aqua.test_all(IonosphereMaps; undocumented_names=true)   # docstrings checked on Julia ≥ 1.11
 
     import CompatHelperLocal as CHL
     CHL.@check()

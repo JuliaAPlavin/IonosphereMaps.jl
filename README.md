@@ -1,10 +1,10 @@
-# IonosphericRM.jl
+# IonosphereMaps.jl
 
 Ionospheric slant TEC, Faraday rotation measure and group delay along a line of sight, and the maps' own vertical TEC,
 from IONEX global ionosphere maps (GIMs) in the thin-shell model.
 
 ```julia
-using IonosphericRM, Dates, SkyCoords, Unitful
+using IonosphereMaps, Dates, SkyCoords, Unitful
 
 m = GlobalMap(["COD0OPSFIN_20250260000_01D_01H_GIM.INX.gz", "COD0OPSFIN_20250270000_01D_01H_GIM.INX.gz"]; mapping=MSLM())
 site = (; lat=-30.71292u"°", lon=21.44380u"°", h=1050u"m")                 # MeerKAT

@@ -1,4 +1,4 @@
-name = "IonosphericRM"
+name = "IonosphereMaps"
 uuid = "f717e84b-94e2-4b09-8850-240f1acc453c"
 authors = ["Alexander Plavin <alexander@plav.in>"]
 version = "0.1.0"

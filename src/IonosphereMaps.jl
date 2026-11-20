@@ -1,4 +1,4 @@
-module IonosphericRM
+module IonosphereMaps
 
 using Dates
 using AxisKeys: KeyedArray, axiskeys
