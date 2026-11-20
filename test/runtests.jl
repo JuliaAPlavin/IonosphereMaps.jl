@@ -3,37 +3,43 @@ using TestItemRunner
 @run_package_tests
 
 @testmodule Track begin
-    using Dates, SkyCoords, Unitful, IonosphereMaps
+    using Dates, AxisKeys, SkyCoords, StaticArrays, Unitful, UnitfulAngles, IonosphereMaps
     using IonosphereMaps: ecef, source_direction
     # MeerKAT array centre and 3C138 (J2000); MeerKAT 2025-07-25 scan mid-times (UTC)
     const DATA = joinpath(@__DIR__, "data")
     const SITE = (; lat=-30.71292u"°", lon=21.44380u"°", h=1050.0u"m")
-    const SRC = ICRSCoords(deg2rad(15 * (5 + 21/60 + 9.886/3600)), deg2rad(16 + 38/60 + 22.05/3600))
+    const SRC = ICRSCoords((5 + 21/60 + 9.886/3600)u"hourAngle", (16 + 38/60 + 22.05/3600)u"°")
     const SCANS = DateTime(2025, 7, 25) .+ Minute.([366, 386, 403, 424, 441, 462, 479, 500, 517, 537, 555, 574, 593, 612])
     const LOS = LineOfSight(SITE, SRC)
     # the same line of sight as an Earth-fixed ray, at time t
     ray(t) = Ray(ecef(SITE), source_direction(SRC, t))
     const GEOMETRIES = [Returns(LOS), ray]
     const TECU = 1e16u"m^-2"
+    # maps of 1 TECU everywhere at time T: slant TEC in TECU is the mapping factor
+    const T = DateTime(2025, 1, 1)
+    uniform(; radius=6371.0u"km", height=450.0u"km") =
+        (; tec=KeyedArray(ones(71, 73, 1); lat=(87.5:-2.5:-87.5)u"°", lon=(-180.0:5.0:180.0)u"°", epoch=[T]), rms=nothing, radius, height)
+    # local geodetic up and north at lat, lon
+    enu(lat, lon) = (; up=SVector(cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat)), north=SVector(-sin(lat) * cos(lon), -sin(lat) * sin(lon), cos(lat)))
 end
 
 @testitem "constants and geometry" setup=[Track] begin
     using IonosphereMaps: K_RM, ecef, geodetic_up, pierce, source_direction
-    using LinearAlgebra, Dates, SkyCoords, Unitful
+    using LinearAlgebra, Dates, SkyCoords, Unitful, UnitfulAngles
     @test K_RM * 1u"m^-2" * 1u"T" ≈ 2.6312e-13u"rad/m^2" rtol=1e-4
     o = ecef(Track.SITE)
     @test pierce(o, normalize(o), 6821u"km") ≈ 6821u"km" * normalize(o)
     # 3C138 elevation, astropy (via spinifex) reference: 37.08263° at 06:06, 30.659° (ALBUS) at 10:12
-    el(t) = rad2deg(asin(dot(source_direction(Track.SRC, t), geodetic_up(ecef(Track.SITE)))))
-    @test el(Track.SCANS[1]) ≈ 37.0826 atol=0.01
-    @test el(Track.SCANS[end]) ≈ 30.659 atol=0.02
+    el(t) = asin(dot(source_direction(Track.SRC, t), geodetic_up(ecef(Track.SITE))))
+    @test el(Track.SCANS[1]) ≈ 37.0826u"°" atol=0.01u"°"
+    @test el(Track.SCANS[end]) ≈ 30.659u"°" atol=0.02u"°"
     # Earth-fixed direction, SOFA c2t06a (IAU 2006/2000A, no polar motion, UT1 = UTC); also near the celestial poles
-    angle(a, b) = rad2deg(acos(clamp(dot(a, b), -1, 1))) * 3600
+    angle(a, b) = acos(clamp(dot(a, b), -1, 1))
     @testset for (src, t, ref) in [
-            (ICRSCoords(deg2rad(30.0), deg2rad(89.9)), DateTime(2025, 7, 25, 6, 6), [-0.0003361819, 0.0012448534, 0.9999991687]),
+            (ICRSCoords(30.0u"°", 89.9u"°"), DateTime(2025, 7, 25, 6, 6), [-0.0003361819, 0.0012448534, 0.9999991687]),
             (Track.SRC, DateTime(2025, 7, 25, 6, 6), [0.6660455275, 0.6885773449, 0.2867831853]),
-            (ICRSCoords(deg2rad(200.0), deg2rad(-89.5)), DateTime(2031, 1, 3, 17, 45), [-0.0055652884, -0.0021720281, -0.9999821548])]
-        @test angle(source_direction(src, t), normalize(ref)) < 0.5   # arcsec
+            (ICRSCoords(200.0u"°", -89.5u"°"), DateTime(2031, 1, 3, 17, 45), [-0.0055652884, -0.0021720281, -0.9999821548])]
+        @test angle(source_direction(src, t), normalize(ref)) < 0.5u"arcsecond"
     end
 end
 
@@ -64,7 +70,7 @@ end
     using Dates, SkyCoords, Uncertain, Unitful
     m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"); mapping=MSLM())
     # below the horizon: 3C138 is up throughout these maps (03:00–13:00), a source at +80° never rises at MeerKAT
-    north = LineOfSight(Track.SITE, ICRSCoords(0.0, deg2rad(80)))
+    north = LineOfSight(Track.SITE, ICRSCoords(0u"°", 80u"°"))
     r = @inferred ionospheric_rm(m, north, DateTime(2025, 7, 25, 8))
     s = @inferred ionospheric_tec(m, north, DateTime(2025, 7, 25, 8))
     @test isnan(U.value(r)) && isnan(U.uncertainty(r))
@@ -100,7 +106,7 @@ end
     @testset for (file, ref) in ["COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz" => cod, "UPC0OPSRAP_20252060000_01D_15M_GIM_crop.INX.Z" => upc]
         m = GlobalMap(joinpath(Track.DATA, file); mapping=SLM())
         v = [vtec(m, (; lat = lat * u"°", lon = lon * u"°"), t) for (t, _) in ref for (lat, lon) in points]
-        expected = reduce(vcat, last.(ref))
+        expected = collect(Iterators.flatmap(last, ref))
         @test U.value.(v) ≈ first.(expected) .* TECU atol=3e-6TECU   # norm over values given to 1e-6
         @test U.uncertainty.(v) ≈ last.(expected) .* TECU atol=3e-6TECU
     end
@@ -133,8 +139,8 @@ end
     # its line of sight includes aberration, 15″ here, ours does not
     @testset for geometry in Track.GEOMETRIES
         s = [ionospheric_tec(m, geometry(t), t) for t in DateTime(2025, 7, 25) .+ Minute.([366, 480, 612])]
-        @test U.value.(s) ≈ [20.35420, 31.72016, 49.29405]u"m^-2" .* 1e16 rtol=1e-4
-        @test U.uncertainty.(s) ≈ [2.05135, 1.82856, 2.63291]u"m^-2" .* 1e16 rtol=1e-4
+        @test U.value.(s) ≈ [20.35420, 31.72016, 49.29405] .* TECU rtol=1e-4
+        @test U.uncertainty.(s) ≈ [2.05135, 1.82856, 2.63291] .* TECU rtol=1e-4
         t = DateTime(2025, 7, 25, 8)
         @test (@inferred ionospheric_tec(m, geometry(t), t)) isa Uncertain.Value
     end
@@ -148,8 +154,8 @@ end
     @test U.value.(rm) ≈ [-1.045650, -1.843167, -2.561181]u"rad/m^2" atol=3e-4u"rad/m^2"
     @test U.uncertainty.(rm) ≈ [0.105383, 0.106252, 0.136799]u"rad/m^2" atol=3e-5u"rad/m^2"
     s = [ionospheric_tec(m, ray, t) for (t, ray) in rays]
-    @test U.value.(s) ≈ [20.35420, 31.72016, 49.29405]u"m^-2" .* 1e16 rtol=1e-4
-    @test U.uncertainty.(s) ≈ [2.05135, 1.82856, 2.63291]u"m^-2" .* 1e16 rtol=1e-4
+    @test U.value.(s) ≈ [20.35420, 31.72016, 49.29405] .* TECU rtol=1e-4
+    @test U.uncertainty.(s) ≈ [2.05135, 1.82856, 2.63291] .* TECU rtol=1e-4
 end
 
 @testitem "Ray: vertical at a grid node, geodetic horizon, construction" setup=[Track] begin
@@ -163,9 +169,7 @@ end
 
     # at MeerKAT, toward the north at -0.05° geodetic elevation: below the geodetic horizon,
     # above the geocentric one (+0.12°)
-    lat, lon = -30.71292u"°", 21.44380u"°"
-    up = SVector(cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat))
-    north = SVector(-sin(lat) * cos(lon), -sin(lat) * sin(lon), cos(lat))
+    (; up, north) = Track.enu(-30.71292u"°", 21.44380u"°")
     ray = Ray(SVector(5109235.683, 2006794.555, -3239107.175)u"m", cosd(-0.05) * north + sind(-0.05) * up)
     t = DateTime(2025, 7, 25, 8)
     @testset for mapping in [SLM(), MSLM()]
@@ -190,18 +194,16 @@ end
 
     # an ECEF origin with length units, a unit direction
     @test_throws MethodError Ray(SVector(0.0, 6378137.0, 0.0), SVector(0.0, 1.0, 0.0))
-    @test_throws AssertionError Ray(SVector(0.0, 6378137.0, 0.0)u"m", SVector(0.0, 1.0, 1.0))
+    @test_throws ArgumentError Ray(SVector(0.0, 6378137.0, 0.0)u"m", SVector(0.0, 1.0, 1.0))
 end
 
-@testitem "Petrov 2023 mapping" begin
-    using Dates, AxisKeys, StaticArrays, Unitful
-    # a map of 1 TECU everywhere: slant TEC in TECU is the mapping factor
-    t = DateTime(2025, 1, 1)
-    uniform(radius, height) = GlobalMap((; tec=KeyedArray(ones(71, 73, 1); lat=(87.5:-2.5:-87.5)u"°", lon=(-180.0:5.0:180.0)u"°", epoch=[t]),
-                                           rms=nothing, radius, height), Petrov2023())
+@testitem "Petrov 2023 mapping" setup=[Track] begin
+    using StaticArrays, Unitful
+    using .Track: TECU
+    uniform(radius, height) = GlobalMap(Track.uniform(; radius, height), Petrov2023())
     # from 45°N 0°E on the reference sphere, northward at geocentric elevation e (geodetic elevation 0.19° higher)
     ray(R, e) = Ray(R * SVector(cosd(45), 0, sind(45)), sind(e) * SVector(cosd(45), 0, sind(45)) + cosd(e) * SVector(-sind(45), 0, cosd(45)))
-    factor(m, R, e) = (@inferred ionospheric_tec(m, ray(R, e), t)) / 1e16u"m^-2"
+    factor(m, R, e) = (@inferred ionospheric_tec(m, ray(R, e), Track.T)) / TECU
     # eq. 12 of the paper in 256-bit BigFloat, outside the package
     m = uniform(6371.0u"km", 450.0u"km")
     M = factor.(Ref(m), 6371.0u"km", [90, 45, 30, 20, 15, 10, 5])
@@ -212,36 +214,31 @@ end
     @test factor(uniform(6378.137u"km", 350.0u"km"), 6378.137u"km", 10) ≈ 2.25724822057 rtol=1e-11
 end
 
-@testitem "mapping factors at the zenith" begin
-    using Dates, AxisKeys, LinearAlgebra, StaticArrays, Unitful
+@testitem "mapping factors at the zenith" setup=[Track] begin
+    using LinearAlgebra, Unitful
     using IonosphereMaps: ecef
-    # a map of 1 TECU everywhere: slant TEC in TECU is the mapping factor
-    t = DateTime(2025, 1, 1)
-    uniform = (; tec=KeyedArray(ones(71, 73, 1); lat=(87.5:-2.5:-87.5)u"°", lon=(-180.0:5.0:180.0)u"°", epoch=[t]),
-               rms=nothing, radius=6371.0u"km", height=450.0u"km")
+    using .Track: TECU
     sites = [(; lat, lon, h) for lat in (-89.9:9.99:89.9)u"°" for lon in (-179.0:47.0:179.0)u"°" for h in (0.0u"m", 3000.0u"m")]
-    geocentric(site) = normalize(ustrip.(u"m", ecef(site)))
-    geodetic(site) = SVector(cos(site.lat) * cos(site.lon), cos(site.lat) * sin(site.lon), sin(site.lat))
+    geocentric(site) = normalize(ecef(site))
+    geodetic(site) = Track.enu(site.lat, site.lon).up
     # toward the vertical each mapping is defined from (SLM and Petrov2023 the geocentric, MSLM the geodetic) its zenith factor,
     # toward the other one (up to 0.19° away) close to it; Petrov2023 eq. 12 at e = 90° in 256-bit BigFloat.
     # Directions off unit length by a few eps, as Ray allows.
     @testset for (mapping, own, other, zenith) in [(SLM(), geocentric, geodetic, 1), (MSLM(), geodetic, geocentric, 1),
                                                    (Petrov2023(), geocentric, geodetic, 0.8504277878317943)]
-        m = GlobalMap(uniform, mapping)
-        factors(up) = [ionospheric_tec(m, Ray(ecef(site), s * up(site)), t) / 1e16u"m^-2" for site in sites for s in 1 .+ (-4:4) .* eps()]
+        m = GlobalMap(Track.uniform(), mapping)
+        factors(up) = [ionospheric_tec(m, Ray(ecef(site), s * up(site)), Track.T) / TECU for site in sites for s in 1 .+ (-4:4) .* eps()]
         @test factors(own) ≈ fill(zenith, 9length(sites)) rtol=1e-14
         @test factors(other) ≈ fill(zenith, 9length(sites)) rtol=2e-4
     end
 end
 
 @testitem "group delay" setup=[Track] begin
-    using Dates, AxisKeys, SkyCoords, StaticArrays, Uncertain, Unitful
-    t = DateTime(2025, 1, 1)
-    tecu = GlobalMap((; tec=KeyedArray(ones(3, 3, 1); lat=(5.0:-5.0:-5.0)u"°", lon=(-5.0:5.0:5.0)u"°", epoch=[t]), rms=nothing,
-                        radius=6371.0u"km", height=450.0u"km"), SLM())
+    using Dates, SkyCoords, StaticArrays, Uncertain, Unitful
+    tecu = GlobalMap(Track.uniform(), SLM())
     # 1 TECU along a vertical ray from the equator at 0°E: e²/(8π²ε₀mₑ) · 10¹⁶ m⁻² / (c ν²) in 256-bit BigFloat
     # from CODATA 2018 values (Unitful's ε₀ = 1/(μ₀c²) with μ₀ = 4π·10⁻⁷ H/m is 5·10⁻¹⁰ off)
-    delay(ν) = @inferred ionospheric_group_delay(tecu, Ray(SVector(6378137.0, 0.0, 0.0)u"m", SVector(1.0, 0.0, 0.0)), t, ν)
+    delay(ν) = @inferred ionospheric_group_delay(tecu, Ray(SVector(6378137.0, 0.0, 0.0)u"m", SVector(1.0, 0.0, 0.0)), Track.T, ν)
     @test delay(1u"GHz") ≈ 1.344536593446e-9u"s" rtol=1e-9
     @test delay(15.368u"GHz") ≈ 5.692957254713e-12u"s" rtol=1e-9
     @test delay(1u"GHz") ≈ 4 * delay(2e9u"Hz") rtol=1e-14
@@ -257,7 +254,7 @@ end
     end
 
     # below the horizon (a source at +80° never rises at MeerKAT), with and without RMS maps
-    d = @inferred ionospheric_group_delay(m, LineOfSight(Track.SITE, ICRSCoords(0.0, deg2rad(80))), DateTime(2025, 7, 25, 8), 1u"GHz")
+    d = @inferred ionospheric_group_delay(m, LineOfSight(Track.SITE, ICRSCoords(0u"°", 80u"°")), DateTime(2025, 7, 25, 8), 1u"GHz")
     @test isnan(U.value(d))
     @test isnan(U.uncertainty(d))
     m0 = GlobalMap(joinpath(Track.DATA, "codg0600.21i_crop.gz"); mapping=MSLM())
@@ -320,7 +317,7 @@ end
 end
 
 @testitem "grid interpolation: polar caps" setup=[Track] begin
-    using Dates, AxisKeys, StaticArrays, Uncertain
+    using Dates, AxisKeys, Uncertain
     using Unitful: @u_str, °
     using IonosphereMaps: ecef
     using .Track: TECU
@@ -348,8 +345,7 @@ end
     # a missing node in the outermost row: NaN throughout its cap, the rest of the map unaffected
     holed = gmap([NaN 2 3 6; tec[2:end, :]], rms, 60.0:-30.0:-60.0, -180.0:90.0:90.0)
     @test isnan(U.value(vtec(holed, (; lat = 89.0°, lon = 45.0°), t)))
-    @test U.value.([vtec(holed, (; lat = 45.0°, lon = 45.0°), t), vtec(holed, (; lat = -70.0°, lon = 112.5°), t)]) ≈ [5.75, 30] .* TECU rtol=1e-12
-    # beyond the grid otherwise: not all longitudes, or the outermost row not one step from the pole
+    @test U.value.([vtec(holed, (; lat = 45.0°, lon = 45.0°), t), vtec(holed, (; lat = -70.0°, lon = 112.5°), t)]) ≈ [5.75, 30] .* TECU rtol=1e-12    # beyond the grid otherwise: not all longitudes, or the outermost row not one step from the pole
     @test_throws DomainError vtec(gmap(tec[:, 1:3], rms[:, 1:3], 60.0:-30.0:-60.0, -180.0:90.0:0.0), (; lat = 75.0°, lon = -135.0°), t)
     @test_throws DomainError vtec(gmap(tec, rms, 50.0:-25.0:-50.0, -180.0:90.0:90.0), (; lat = 60.0°, lon = 0.0°), t)
     @test_throws DomainError vtec(gmap(tec, rms, 50.0:-25.0:-50.0, -180.0:90.0:90.0), (; lat = -60.0°, lon = 0.0°), t)
@@ -360,8 +356,7 @@ end
     # two rotated maps, times 1/cos z′ at the pierce point
     m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252430000_01D_01H_GIM_polar.INX.gz"); mapping=SLM())
     lat, lon = 78.93°, 11.87°
-    up = SVector(cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat))
-    north = SVector(-sin(lat) * cos(lon), -sin(lat) * sin(lon), cos(lat))
+    (; up, north) = Track.enu(lat, lon)
     s = @inferred ionospheric_tec(m, Ray(ecef((; lat, lon, h=87.0u"m")), cosd(12) * north + sind(12) * up), DateTime(2025, 8, 31, 6, 20))
     @test U.value(s) ≈ 40.244515712906505TECU rtol=1e-12
     @test U.uncertainty(s) ≈ 7.990758323319431TECU rtol=1e-12
@@ -385,7 +380,7 @@ end
     @testset for (file, ref) in ["UPC0OPSRAP_20252060000_01D_15M_GIM_seam.INX.Z" => upc, "COD0OPSFIN_20252060000_01D_01H_GIM_seam.INX.gz" => cod]
         m = GlobalMap(joinpath(Track.DATA, file); mapping=SLM())
         v = [vtec(m, (; lat = lat * u"°", lon = lon * u"°"), t) for (t, _) in ref for (lat, lon) in points]
-        expected = reduce(vcat, last.(ref))
+        expected = collect(Iterators.flatmap(last, ref))
         @test U.value.(v) ≈ first.(expected) .* TECU atol=3e-6TECU
         @test U.uncertainty.(v) ≈ last.(expected) .* TECU atol=3e-6TECU
     end
@@ -402,7 +397,7 @@ end
 end
 
 @testitem "multi-day maps: the later file's midnight map, continuous across midnight" setup=[Track] begin
-    using Dates, SkyCoords, AxisKeys, Unitful
+    using Dates, SkyCoords, AxisKeys, Unitful, UnitfulAngles
     using .Track: TECU
     # CODE final GIMs for 2021-02-28 (21–24 h) and 2021-03-01 (0–6 h), cropped; both hold a 03-01 00:00 map
     day59, day60 = joinpath.(Track.DATA, ["codg0590.21i_crop.gz", "codg0600.21i_crop.gz"])
@@ -424,10 +419,10 @@ end
         DateTime(2021, 3, 1, 0, 0)    => [5.268362, 4.067600, 3.558712, 3.900000],
         DateTime(2021, 3, 1, 0, 20)   => [5.153949, 3.982052, 3.629691, 4.100000],
         DateTime(2021, 3, 1, 0, 40)   => [4.949695, 3.911511, 3.637171, 4.033333]]
-    @test [vtec(m, (; lat = lat * u"°", lon = lon * u"°"), t) for (t, _) in spinifex for (lat, lon) in points] ≈ reduce(vcat, last.(spinifex)) .* TECU atol=3e-6TECU   # norm over 28 values given to 1e-6
+    @test [vtec(m, (; lat = lat * u"°", lon = lon * u"°"), t) for (t, _) in spinifex for (lat, lon) in points] ≈ collect(Iterators.flatmap(last, spinifex)) .* TECU atol=3e-6TECU   # norm over 28 values given to 1e-6
 
     # 3C286: a single daily file jumps at midnight, the merged map does not
-    src = ICRSCoords(deg2rad(15 * (13 + 31/60 + 8.288/3600)), deg2rad(30 + 30/60 + 32.96/3600))
+    src = ICRSCoords((13 + 31/60 + 8.288/3600)u"hourAngle", (30 + 30/60 + 32.96/3600)u"°")
     rm(model, t) = ionospheric_rm(model, LineOfSight(Track.SITE, src), t)
     midnight = DateTime(2021, 3, 1)
     @test [rm(m59, midnight), rm(m60, midnight)] ≈ [-0.4833, -0.4795]u"rad/m^2" atol=1e-4u"rad/m^2"
@@ -500,8 +495,12 @@ end
         reordered = rewritten(ls -> (e = epochlines(ls); ls[[1:e[1]-1; e[order[1]]; e[1]+1:e[2]-1; e[order[2]]; e[2]+1:end]]), day60)
         @test_throws ArgumentError("$reordered has TEC map epochs not strictly increasing: $(DateTime(2021, 3, 1) .+ Hour.(order .- 1))") read_ionex(reordered)
     end
+    # the map at START line i numbered n, in its START and END records
+    renumber(ls, i, n) = let j = findnext(l -> headerlabel(l) == replace(headerlabel(ls[i]), "START" => "END"), ls, i)
+        [ls[1:i-1]; lpad(n, 6) * ls[i][7:end]; ls[i+1:j-1]; lpad(n, 6) * ls[j][7:end]; ls[j+1:end]]
+    end
     # TEC maps numbered 1 to n, each with its epoch inside its block
-    renumbered = rewritten(ls -> (i = starts(ls)[2]; [ls[1:i-1]; "     3" * ls[i][7:end]; ls[i+1:end]]), day60)
+    renumbered = rewritten(ls -> renumber(ls, starts(ls)[2], 3), day60)
     @test_throws ArgumentError("$renumbered has TEC maps numbered $([1, 3, 3, 4, 5, 6, 7]), not 1 to 7") read_ionex(renumbered)
     outside = rewritten(ls -> (i = starts(ls)[2]; @assert headerlabel(ls[i+1]) == "EPOCH OF CURRENT MAP"; ls[[1:i-1; i+1; i; i+2:end]]), day60)
     @test_throws ArgumentError("$outside has no EPOCH OF CURRENT MAP in TEC map 2") read_ionex(outside)
@@ -519,7 +518,7 @@ end
     end
     fewer = rewritten(ls -> [ls[1:rmsstarts(ls)[end]-1]; ls[end]], cod)
     @test_throws ArgumentError("$fewer has RMS maps numbered $(collect(1:10)), its TEC maps 1 to 11") read_ionex(fewer)
-    misnumbered = rewritten(ls -> (i = rmsstarts(ls)[2]; [ls[1:i-1]; "     3" * ls[i][7:end]; ls[i+1:end]]), cod)
+    misnumbered = rewritten(ls -> renumber(ls, rmsstarts(ls)[2], 3), cod)
     @test_throws ArgumentError("$misnumbered has RMS maps numbered $([1; 3; 3:11]), its TEC maps 1 to 11") read_ionex(misnumbered)
     moved = rewritten(cod) do ls
         e = rmsstarts(ls)[2] + 1
@@ -528,10 +527,16 @@ end
     end
     @test_throws ArgumentError("$moved has RMS map 2 at $(DateTime(2025, 7, 25, 4, 30)), its TEC map at $(DateTime(2025, 7, 25, 4))") read_ionex(moved)
     # row records that disagree with the header grid
-    @test_throws AssertionError read_ionex(rewritten(ls -> replace(ls, "   -10.0 -10.0  55.0   5.0 450.0" * " "^28 * "LAT/LON1/LON2/DLON/H" =>
+    @test_throws ArgumentError read_ionex(rewritten(ls -> replace(ls, "   -10.0 -10.0  55.0   5.0 450.0" * " "^28 * "LAT/LON1/LON2/DLON/H" =>
                                                                        "   -10.0  -5.0  60.0   5.0 450.0" * " "^28 * "LAT/LON1/LON2/DLON/H"), day60))
-    @test_throws AssertionError read_ionex(rewritten(ls -> replace(ls, "   -12.5 -10.0  55.0   5.0 450.0" * " "^28 * "LAT/LON1/LON2/DLON/H" =>
+    @test_throws ArgumentError read_ionex(rewritten(ls -> replace(ls, "   -12.5 -10.0  55.0   5.0 450.0" * " "^28 * "LAT/LON1/LON2/DLON/H" =>
                                                                        "   -12.0 -10.0  55.0   5.0 450.0" * " "^28 * "LAT/LON1/LON2/DLON/H"), day60))
+    # an END record closing another map than its START opened
+    misclosed = rewritten(cod) do ls
+        i = findfirst(l -> headerlabel(l) == "END OF TEC MAP", ls)
+        [ls[1:i-1]; "     2" * ls[i][7:end]; ls[i+1:end]]
+    end
+    @test_throws ArgumentError read_ionex(misclosed)
 
     # a node without a value (9999): NaN wherever it takes part
     holed = rewritten(day60) do ls

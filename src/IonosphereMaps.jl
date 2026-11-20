@@ -30,7 +30,7 @@ struct Ray{O, D}
     direction::D
 
     function Ray(origin::SVector{3, <:Length}, direction::SVector{3, <:Real})
-        @assert norm(direction) ≈ 1
+        norm(direction) ≈ 1 || throw(ArgumentError("Ray direction must be a unit vector, has norm $(norm(direction))"))
         new{typeof(origin), typeof(direction)}(origin, direction)
     end
 end

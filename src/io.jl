@@ -13,20 +13,22 @@ fixedwidth(f, s, w) = let s = rstrip(s)
 end
 fixedwidth(T::Type, s, w) = fixedwidth(Base.Fix1(parse, T), s, w)
 
-# a map value scaled by 10^expo; no value (9999, or `nan` from some producers) as NaN
+# a map value scaled by 10^expo; no value (9999 at any exponent, or `nan` from some producers) as NaN
 mapvalue(s, expo) = lowercase(strip(s)) == "nan" ? NaN : let v = parse(Int, s)
     v == 9999 ? NaN : v * 10.0^expo
 end
 
 # map in the lines `block` as M[lat, lon], scaled by the EXPONENT in force
-function readmap(lines, block, expos, lats, lons)
+function readmap(path, lines, block, expos, lats, lons)
     rows = filter(j -> headerlabel(lines[j]) == "LAT/LON1/LON2/DLON/H", block)
-    @assert length(rows) == length(lats)
+    length(rows) == length(lats) ||
+        throw(ArgumentError("$path line $(first(block)): map with $(length(rows)) latitude rows, its header grid $(length(lats))"))
     stack(zip(rows, lats); dims=1) do (r, lat)
         rlat, lon1, lon2, dlon = fixedwidth(Float64, lines[r][3:26], 6)
-        @assert rlat ≈ lat && lon1:dlon:lon2 == lons
+        rlat ≈ lat && lon1:dlon:lon2 == lons ||
+            throw(ArgumentError("$path line $r: row at $rlat, $lon1:$dlon:$lon2, not the header grid's $lat, $lons"))
         vals = collect(Iterators.flatmap(l -> fixedwidth(v -> mapvalue(v, expos[r]), l, 5), lines[r+1:r+cld(length(lons), 16)]))
-        @assert length(vals) == length(lons)
+        length(vals) == length(lons) || throw(ArgumentError("$path line $r: row with $(length(vals)) values, its grid $(length(lons))"))
         vals
     end
 end
@@ -46,7 +48,12 @@ function read_ionex(path)
     lats = lat1:dlat:lat2; lons = lon1:dlon:lon2
     any(l -> headerlabel(l) == "START OF HEIGHT MAP", lines) && throw(ArgumentError("$path has height maps, they are not supported"))
     # lines of the map block from the START record at line i to its END record, and the map number in that record
-    block(i) = i:findrecord(path, lines, replace(headerlabel(lines[i]), "START" => "END"), i)
+    function block(i)
+        j = findrecord(path, lines, replace(headerlabel(lines[i]), "START" => "END"), i)
+        parse(Int, lines[j][1:6]) == parse(Int, lines[i][1:6]) ||
+            throw(ArgumentError("$path line $j: $(headerlabel(lines[j])) $(strip(lines[j][1:6])) closes map $(strip(lines[i][1:6]))"))
+        i:j
+    end
     number(b) = parse(Int, lines[first(b)][1:6])
     # the epoch record in a block, if any; hour 24 rolls over to the next day
     function epoch(b)
@@ -71,8 +78,8 @@ function read_ionex(path)
         epoch(b) in (nothing, e) || throw(ArgumentError("$path has RMS map $(number(b)) at $(epoch(b)), its TEC map at $e"))
     end
     keyed(M) = KeyedArray(M; lat=lats * u"°", lon=lons * u"°", epoch=epochs)
-    readmaps(blocks) = keyed(stack(map(b -> readmap(lines, b, expos, lats, lons), blocks)))
+    readmaps(blocks) = keyed(stack(map(b -> readmap(path, lines, b, expos, lats, lons), blocks)))
     (; tec=readmaps(tecblocks), rms=isempty(rmsblocks) ? nothing : readmaps(rmsblocks),
-       height=fixedwidth(Float64, hdr("HGT1 / HGT2 / DHGT")[3:20], 6)[1] * u"km", radius=parse(Float64, hdr("BASE RADIUS")[1:8]) * u"km",
+       height=first(fixedwidth(Float64, hdr("HGT1 / HGT2 / DHGT")[3:20], 6)) * u"km", radius=parse(Float64, hdr("BASE RADIUS")[1:8]) * u"km",
        mapping_function=strip(hdr("MAPPING FUNCTION")))
 end

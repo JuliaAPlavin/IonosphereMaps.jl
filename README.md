@@ -8,7 +8,7 @@ using IonosphereMaps, Dates, SkyCoords, Unitful
 
 m = GlobalMap(["COD0OPSFIN_20250260000_01D_01H_GIM.INX.gz", "COD0OPSFIN_20250270000_01D_01H_GIM.INX.gz"]; mapping=MSLM())
 site = (; lat=-30.71292u"°", lon=21.44380u"°", h=1050u"m")                 # MeerKAT
-los = LineOfSight(site, ICRSCoords(deg2rad(80.29119), deg2rad(16.63946)))  # 3C138
+los = LineOfSight(site, ICRSCoords(80.29119u"°", 16.63946u"°"))  # 3C138
 t = DateTime(2025, 1, 26, 23, 30)
 
 ionospheric_tec(m, los, t)                      # 5.39e17 m^-2 ±ᵤ 5.81e16 m^-2
