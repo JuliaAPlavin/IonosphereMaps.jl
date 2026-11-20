@@ -3,11 +3,17 @@ readlines_decompressed(path) = occursin(r"\.(gz|z)$"i, path) ? readlines(`gzip -
 headerlabel(l) = strip(l[min(end + 1, 61):end])
 
 # fields of width `w`: IONEX numbers need not be separated by spaces
-fixedwidth(T, s, w) = let s = rstrip(s)
-    map(i -> parse(T, s[i:min(i + w - 1, end)]), 1:w:length(s))
+fixedwidth(f, s, w) = let s = rstrip(s)
+    map(i -> f(s[i:min(i + w - 1, end)]), 1:w:length(s))
+end
+fixedwidth(T::Type, s, w) = fixedwidth(Base.Fix1(parse, T), s, w)
+
+# a map value scaled by 10^expo; no value (9999, or `nan` from some producers) as NaN
+mapvalue(s, expo) = lowercase(strip(s)) == "nan" ? NaN : let v = parse(Int, s)
+    v == 9999 ? NaN : v * 10.0^expo
 end
 
-# map block starting at line `i` as M[lat, lon], scaled by the EXPONENT in force; 9999 (no value) as NaN
+# map block starting at line `i` as M[lat, lon], scaled by the EXPONENT in force
 function readmap(lines, i, expos, lats, lons)
     endlabel = replace(headerlabel(lines[i]), "START" => "END")
     stop = findnext(l -> headerlabel(l) == endlabel, lines, i)
@@ -16,9 +22,9 @@ function readmap(lines, i, expos, lats, lons)
     stack(zip(rows, lats); dims=1) do (r, lat)
         rlat, lon1, lon2, dlon = fixedwidth(Float64, lines[r][3:26], 6)
         @assert rlat ≈ lat && lon1:dlon:lon2 == lons
-        vals = collect(Iterators.flatmap(l -> fixedwidth(Int, l, 5), lines[r+1:r+cld(length(lons), 16)]))
+        vals = collect(Iterators.flatmap(l -> fixedwidth(v -> mapvalue(v, expos[r]), l, 5), lines[r+1:r+cld(length(lons), 16)]))
         @assert length(vals) == length(lons)
-        @. ifelse(vals == 9999, NaN, vals * 10.0^expos[r])
+        vals
     end
 end
 

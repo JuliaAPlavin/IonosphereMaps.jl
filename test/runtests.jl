@@ -41,7 +41,7 @@ end
     @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=SLM())), Ref(Track.LOS), Track.SCANS)) ≈ slm atol=3e-4u"rad/m^2"   # norm over the 14 scans; references to 1e-4, sky direction 7″ off ours
     @test U.value.(ionospheric_rm.(Ref(GlobalMap(path; mapping=MSLM())), Ref(Track.LOS), Track.SCANS)) ≈ mslm atol=3e-4u"rad/m^2"
     # circumpolar source, time outside the map epochs
-    @test_throws BoundsError ionospheric_rm(GlobalMap(path; mapping=MSLM()), LineOfSight(Track.SITE, ICRSCoords(0.0, -1.2)), DateTime(2025, 7, 25, 20))
+    @test_throws DomainError ionospheric_rm(GlobalMap(path; mapping=MSLM()), LineOfSight(Track.SITE, ICRSCoords(0.0, -1.2)), DateTime(2025, 7, 25, 20))
     # any sky frame: 3C138 in galactic coordinates
     m = GlobalMap(path; mapping=MSLM())
     gal, icrs = ionospheric_rm.(Ref(m), LineOfSight.(Ref(Track.SITE), [convert(GalCoords, Track.SRC), Track.SRC]), Track.SCANS[1])
@@ -150,9 +150,10 @@ end
     @test vtec(grids[1], t0 + Hour(1), 0.0, 20.0) ≈ f(0, 35)
     single = (; grids[1]..., tec=grids[1].tec[:, :, 1:1])
     @test vtec(single, t0, 0.0, 20.0) ≈ f(0, 20)
-    @test_throws BoundsError vtec(single, t0 + Minute(1), 0.0, 20.0)
-    @test_throws BoundsError vtec(grids[1], t0 - Minute(1), 0.0, 20.0)
-    @test_throws BoundsError vtec(grids[1], t0 + Minute(61), 0.0, 20.0)
+    @test_throws DomainError vtec(single, t0 + Minute(1), 0.0, 20.0)
+    @test_throws DomainError vtec(single, t0 - Minute(1), 0.0, 20.0)
+    @test_throws DomainError vtec(grids[1], t0 - Minute(1), 0.0, 20.0)
+    @test_throws DomainError vtec(grids[1], t0 + Minute(61), 0.0, 20.0)
 end
 
 @testitem "grid interpolation: real maps across the ±180 seam" setup=[Track] begin
@@ -221,8 +222,8 @@ end
     @test rm(m, midnight - Millisecond(1)) ≈ rm(m, midnight) atol=1e-7u"rad/m^2"
     @test rm(m, midnight - Hour(1)) == rm(m59, midnight - Hour(1))
     @test rm.(Ref(m), midnight .+ Minute.(0:30:360)) == rm.(Ref(m60), midnight .+ Minute.(0:30:360))
-    @test_throws BoundsError vtec(m.ionex, DateTime(2021, 3, 1, 6, 30), -30.0, 21.0)
-    @test_throws BoundsError vtec(m.ionex, DateTime(2021, 2, 28, 20, 30), -30.0, 21.0)
+    @test_throws DomainError vtec(m.ionex, DateTime(2021, 3, 1, 6, 30), -30.0, 21.0)
+    @test_throws DomainError vtec(m.ionex, DateTime(2021, 2, 28, 20, 30), -30.0, 21.0)
 end
 
 @testitem "multi-day maps: EXPONENT records apply per file and per map" setup=[Track] begin
@@ -271,6 +272,54 @@ end
     @test findall(isnan, I.tec) == [CartesianIndex(1, 1, 1)]
     @test isnan(vtec(I, DateTime(2021, 3, 1), -11.0, -8.0))
     @test vtec(I, DateTime(2021, 3, 1), -11.0, 0.0) == vtec(ref, DateTime(2021, 3, 1), -11.0, 0.0)
+end
+
+@testitem "IONEX records: `nan` as a missing value" setup=[Track] begin
+    using Dates, Uncertain
+    using IonosphericRM: read_ionex, vtec
+    # UQRG 2022-02-20, maps 06:30–07:00 on 50–40°N, 25–45°E; the 06:45 RMS map has `nan` at 45°N 35°E
+    path = joinpath(Track.DATA, "uqrg0510.22i_crop.gz")
+    I = read_ionex(path)
+    @test findall(isnan, I.rms) == [CartesianIndex(3, 3, 2)]
+    @test !any(isnan, I.tec)
+    # the 06:45 maps as in the file (0.1 TECU)
+    @test I.tec[:, :, 2] ≈ [ 92  98 112 115 124
+                            105 114 124 130 139
+                            123 135 145 143 140
+                            127 133 151 150 167
+                            135 135 140 163 170] ./ 10 rtol=1e-14
+    @test I.rms[[1, 2, 4, 5], :, 2] ≈ [23 23 24 23 23
+                                       23 23 24 23 24
+                                       23 24 23 23 24
+                                       23 24 24 23 23] ./ 10 rtol=1e-14
+    @test I.rms[3, [1, 2, 4, 5], 2] ≈ [2.3, 2.3, 2.3, 2.3] rtol=1e-14
+
+    # at 06:45: VTEC throughout, RMS NaN at the node and the centres of its four cells, finite in other cells
+    t = DateTime(2022, 2, 20, 6, 45)
+    near = [vtec(I, t, lat, lon) for (lat, lon) in [(45.0, 35.0), (46.25, 32.5), (46.25, 37.5), (43.75, 32.5), (43.75, 37.5)]]
+    @test U.value.(near) ≈ [14.5, 12.95, 13.55, 14.1, 14.725] rtol=1e-12
+    @test all(isnan, U.uncertainty.(near))
+    far = [vtec(I, t, lat, lon) for (lat, lon) in [(48.75, 27.5), (41.25, 42.5), (50.0, 45.0), (40.0, 25.0)]]
+    @test U.value.(far) ≈ [10.225, 16.25, 12.4, 13.5] rtol=1e-12
+    @test U.uncertainty.(far) ≈ [2.3, 2.325, 2.3, 2.3] rtol=1e-12
+    # the node is missing only from its own map: NaN within its two map intervals, not at the neighbouring map epochs
+    @test isnan(U.uncertainty(vtec(I, DateTime(2022, 2, 20, 6, 50), 45.0, 35.0)))
+    ends = [vtec(I, t, 45.0, 35.0) for t in DateTime(2022, 2, 20, 6) .+ Minute.([30, 60])]
+    @test U.value.(ends) ≈ [13.7, 14.2] rtol=1e-12
+    @test U.uncertainty.(ends) ≈ [2.3, 2.3] rtol=1e-12
+
+    # `nan` in any case; any other non-number fails to parse
+    function respelled(s)
+        out = tempname()
+        write(out, replace(read(`gzip -dc $path`, String), "  nan" => s))
+        out
+    end
+    @testset for s in ["  NaN", "  NAN"]
+        @test isequal(read_ionex(respelled(s)), I)
+    end
+    @testset for s in ["  ???", "  inf", "   na", "  9e9"]
+        @test_throws ArgumentError read_ionex(respelled(s))
+    end
 end
 
 @testitem "multi-day maps: incompatible or non-consecutive files" setup=[Track] begin

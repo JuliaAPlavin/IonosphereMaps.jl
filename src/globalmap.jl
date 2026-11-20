@@ -10,8 +10,8 @@ struct MSLM end
 Thin-shell model from IONEX global ionosphere maps: VTEC bilinearly interpolated at the pierce point,
 maps blended in time after rotating each with the Sun (IONEX method 3), also across file boundaries.
 `mapping` (`SLM()` or `MSLM()`) converts VTEC to slant TEC; use the one the maps were produced with.
-Pierce points beyond the grid (e.g. past ±87.5° latitude, or outside a regional map) are an error.
-A missing map node (9999 in IONEX) gives NaN throughout its grid cells.
+Pierce points beyond the grid (e.g. past ±87.5° latitude, or outside a regional map), and times outside the maps, are an error.
+A missing map node (9999 or `nan` in IONEX) gives NaN throughout its grid cells.
 
 `paths` are files of consecutive periods in time order, e.g. the daily files of an observation crossing
 midnight. They must share grid, base radius, shell height and mapping function, with gaps of at most one map interval.
@@ -67,6 +67,7 @@ end
 # maps A[lat, lon, epoch] at t; lat, lon in degrees (geocentric)
 function interpolate(A, t, lat, lon)
     epochs = axiskeys(A, :epoch)
+    first(epochs) <= t <= last(epochs) || throw(DomainError(t, "outside the IONEX maps $(first(epochs)) to $(last(epochs))"))
     k = searchsortedlast(epochs, t)
     t == epochs[k] && return bilinear(view(A, :, :, k), lat, lon)
     w = (t - epochs[k]) /ₜ (epochs[k+1] - epochs[k])
