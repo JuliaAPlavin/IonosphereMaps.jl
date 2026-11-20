@@ -1,8 +1,10 @@
 # IonosphereMaps.jl
 
-<!-- animation: examples/globe.jl, user-attachments URL -->
+<!-- animation: examples/ionosphere_viewer.jl, user-attachments URL -->
 
 Ionosphere along lines of sight, from IONEX global maps.
+
+The app shown above: [`examples/ionosphere_viewer.jl`](examples/ionosphere_viewer.jl).
 
 ```julia
 using IonosphereMaps, Dates, SkyCoords, Unitful
