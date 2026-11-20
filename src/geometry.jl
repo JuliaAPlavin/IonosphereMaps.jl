@@ -21,8 +21,7 @@ function pierce(o, k, r)
     o + (-b + sqrt(b^2 - (dot(o, o) - r^2))) * k
 end
 
-# sky direction in any SkyCoords frame → Earth-fixed unit vector: ICRS ≈ J2000, then precession, nutation, Earth rotation
-# with UT1 ≈ UTC; no aberration (≤20″, far below map errors in RM), polar motion or refraction
+# sky direction in any SkyCoords frame → Earth-fixed unit vector, as in the `LineOfSight` docstring
 source_direction(src::AbstractSkyCoords, t) = r_eci_to_ecef(J2000(), PEF(), julian_day(t)) * vec(CartesianCoords{ICRSCoords}(src))
 
 # IGRF field component along -k, i.e. toward the observer, at ECEF position x

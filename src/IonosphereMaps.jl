@@ -47,6 +47,9 @@ Ray(site, direction) = Ray(ecef(site), direction)
 
 From `site`, geodetic WGS84 `(; lat, lon, h)` with angles (Unitful, or plain radians) and a Unitful height,
 toward `source` in any SkyCoords frame.
+
+The source direction at UTC `t` is Earth-fixed through ICRS ≈ J2000, precession, nutation and Earth rotation
+with UT1 ≈ UTC; no aberration (≤20″, far below map errors in RM), polar motion or refraction.
 """
 struct LineOfSight{S, C<:AbstractSkyCoords}
     site::S
