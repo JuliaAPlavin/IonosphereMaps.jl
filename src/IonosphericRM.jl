@@ -11,7 +11,7 @@ using SatelliteToolboxTransformations: r_eci_to_ecef, J2000, PEF, ecef_to_geodet
 using Uncertain: ±ᵤ
 using Unitful: @u_str, Frequency, Length, uconvert, ustrip
 
-export ionospheric_rm, ionospheric_tec, ionospheric_group_delay, Ray, LineOfSight, Vertical, GlobalMap, SLM, MSLM, Petrov2023
+export ionospheric_rm, ionospheric_tec, ionospheric_group_delay, vtec, Ray, LineOfSight, GlobalMap, SLM, MSLM, Petrov2023
 
 """
     Ray(origin, direction)
@@ -47,16 +47,6 @@ end
 
 Ray(los::LineOfSight, t::DateTime) = Ray(ecef(los.site), source_direction(convert(ICRSCoords, los.source), t))
 
-"""
-    Vertical(lat, lon)
-
-Vertical column through geocentric `lat`, `lon` on the ionospheric shell; angles Unitful, or plain radians.
-"""
-struct Vertical{A, B}
-    lat::A
-    lon::B
-end
-
 include("geometry.jl")
 include("io.jl")
 include("globalmap.jl")
@@ -64,20 +54,21 @@ include("globalmap.jl")
 """
     ionospheric_tec(model, geometry, t::DateTime)
 
-Ionospheric total electron content (m⁻²) at UTC `t`: vertical for `Vertical`, slant for `Ray` and `LineOfSight`
-(NaN below the geodetic horizon of the ray origin). For maps with RMS maps, returns `tec ±ᵤ σ` (`Uncertain.Value`),
-σ from the map RMS.
+Ionospheric total electron content (m⁻²) along a `Ray` or `LineOfSight` at UTC `t` as predicted by the model,
+its mapping included; NaN below the geodetic horizon of the ray origin. For maps with RMS maps, returns `tec ±ᵤ σ`
+(`Uncertain.Value`), σ from the map RMS. For a map's own vertical TEC, see [`vtec`](@ref).
 """
-ionospheric_tec(model, ray::Ray, t::DateTime) = slant_tec(model, ray, t).stec * TECU
+ionospheric_tec(model, ray::Ray, t::DateTime) = slant_tec(model, ray, t).stec
 ionospheric_tec(model, los::LineOfSight, t::DateTime) = ionospheric_tec(model, Ray(los, t), t)
 
 """
     ionospheric_group_delay(model, geometry, t::DateTime, ν)
 
 Ionospheric group delay (s) at the cyclic frequency `ν` (Unitful, e.g. `GHz`; an angular frequency in rad/s has the same
-Unitful dimension and silently gives a 4π² smaller delay) for any geometry of [`ionospheric_tec`](@ref) at UTC `t`:
-`K·TEC / (c ν²)`, `K = e² / (8π² ε₀ mₑ)`. Positive: the group is delayed, the phase advanced by the same amount
-(phase delay `-K·TEC / (c ν²)`). NaN below the horizon, and `delay ±ᵤ σ` for maps with RMS maps, as for TEC.
+Unitful dimension and silently gives a 4π² smaller delay) along a `Ray` or `LineOfSight` at UTC `t`:
+`K·TEC / (c ν²)`, `K = e² / (8π² ε₀ mₑ)`, TEC from [`ionospheric_tec`](@ref). Positive: the group is delayed,
+the phase advanced by the same amount (phase delay `-K·TEC / (c ν²)`). NaN below the horizon, and `delay ±ᵤ σ`
+for maps with RMS maps, as for TEC.
 """
 ionospheric_group_delay(model, geometry, t::DateTime, ν::Frequency) =
     uconvert(u"s", K_ION * ionospheric_tec(model, geometry, t) / (u"c" * ν^2))
@@ -92,7 +83,7 @@ and mapping approximations or the field model.
 """
 function ionospheric_rm(model, ray::Ray, t::DateTime)
     (; stec, pp) = slant_tec(model, ray, t)
-    uconvert(u"rad/m^2", K_RM * stec * TECU * bpar(pp, ray.direction, t))
+    uconvert(u"rad/m^2", K_RM * stec * bpar(pp, ray.direction, t))
 end
 ionospheric_rm(model, los::LineOfSight, t::DateTime) = ionospheric_rm(model, Ray(los, t), t)
 

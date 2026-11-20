@@ -17,10 +17,11 @@ struct Petrov2023 end
 
 Thin-shell model from IONEX global ionosphere maps: VTEC bilinearly interpolated at the pierce point,
 maps blended in time after rotating each with the Sun (IONEX method 3), also across file boundaries.
-`mapping` (`SLM()`, `MSLM()` or `Petrov2023()`) converts VTEC to slant TEC. The files' MAPPING FUNCTION record
-(COSZ or NONE in practice) is used only to check that joined files agree. CODE produces its maps with MSLM;
-Petrov2023 is fitted to VLBI astrometry and includes its scale factor k = 0.85.
-Pierce points beyond the grid (e.g. past ±87.5° latitude, or outside a regional map), and times outside the maps, are an error.
+`mapping` (`SLM()`, `MSLM()` or `Petrov2023()`) converts VTEC to slant TEC; [`vtec`](@ref) looks up the VTEC itself.
+The files' MAPPING FUNCTION record (COSZ or NONE in practice) is used only to check that joined files agree.
+CODE produces its maps with MSLM; Petrov2023 is fitted to VLBI astrometry and includes its scale factor k = 0.85.
+Points beyond the grid (e.g. pierce points past ±87.5° latitude, or outside a regional map), and times outside the maps,
+are an error.
 For a regional map, the rotation with the Sun can move a point inside the grid outside it near the east and west edges
 between map epochs: also an error.
 A missing map node (9999 or `nan` in IONEX) gives NaN throughout its grid cells.
@@ -83,8 +84,8 @@ function mapindex(I, t)
     searchsortedlast(epochs, t)
 end
 
-# maps A[lat, lon, epoch] at t in the interval k; lat, lon in degrees (geocentric)
-function interpolate(A, t, k, lat, lon)
+# maps A[lat, lon, epoch] at lat, lon in degrees (geocentric) and t in the map interval k
+function interpolate(A, lat, lon, t, k)
     epochs = axiskeys(A, :epoch)
     t == epochs[k] && return bilinear(view(A, :, :, k), lat, lon)
     w = (t - epochs[k]) /ₜ (epochs[k+1] - epochs[k])
@@ -92,23 +93,30 @@ function interpolate(A, t, k, lat, lon)
     e1 = bilinear(view(A, :, :, k+1), lat, lon + 360u"°" * ((t - epochs[k+1]) /ₜ Day))
     (1 - w) * e0 + w * e1
 end
-interpolate(::Nothing, t, k, lat, lon) = nothing
+interpolate(::Nothing, lat, lon, t, k) = nothing
 
-# VTEC (TECU), ± its RMS where the file has RMS maps, at geocentric lat, lon (Unitful, or plain radians).
+"""
+    vtec(m::GlobalMap, lat, lon, t::DateTime)
+
+Vertical total electron content (m⁻²) of the maps of `m` at geocentric `lat`, `lon` on their shell (angles Unitful,
+or plain radians) at UTC `t`, interpolated as described in [`GlobalMap`](@ref). For maps with RMS maps, returns
+`tec ±ᵤ σ` (`Uncertain.Value`), σ from the map RMS. This is the maps' own data, not a model prediction:
+the mapping of `m` plays no role (e.g. no scale factor k of `Petrov2023`).
+"""
+vtec(m::GlobalMap, lat, lon, t::DateTime) = vtec(m, lat, lon, t, mapindex(m.ionex, t))
+# t in the map interval k (from mapindex)
 # RMS is interpolated with the TEC weights: errors at neighbouring nodes of a smooth map are close to fully correlated.
-vtec(I, t, lat, lon) = vtec(I, t, mapindex(I, t), lat, lon)
-function vtec(I, t, k, lat, lon)
+function vtec(m::GlobalMap, lat, lon, t, k)
+    (; tec, rms) = m.ionex
     lat, lon = uconvert(u"°", lat), uconvert(u"°", lon)
-    with_rms(interpolate(I.tec, t, k, lat, lon), interpolate(I.rms, t, k, lat, lon))
+    with_rms(interpolate(tec, lat, lon, t, k), interpolate(rms, lat, lon, t, k)) * TECU
 end
 with_rms(v, σ) = v ±ᵤ σ
 with_rms(v, ::Nothing) = v
 
-# below the horizon: NaN of the type VTEC has with these RMS maps
+# below the horizon: NaN of the type VTEC (TECU) has with these RMS maps
 nan_like(::Nothing) = NaN
 nan_like(rms::AbstractArray) = NaN ±ᵤ NaN
-
-ionospheric_tec(m::GlobalMap, v::Vertical, t::DateTime) = vtec(m.ionex, t, v.lat, v.lon) * TECU
 
 # mapping from VTEC to slant TEC for `ray`, piercing the shell of the maps `I` at pp
 mapping_factor(::SLM, I, pp, ray) = norm(pp) / dot(pp, ray.direction)
@@ -124,11 +132,11 @@ function mapping_factor(::Petrov2023, I, pp, ray)
     k / sqrt(1 - (R / (R + H + ΔH) * cos(α * e))^2)
 end
 
-# slant TEC (TECU) along `ray` and its pierce point pp; the time and the ray origin are checked also below the horizon
+# slant TEC (m⁻²) along `ray` and its pierce point pp; the time and the ray origin are checked also below the horizon
 function slant_tec(m::GlobalMap, ray, t)
     I = m.ionex
     k = mapindex(I, t)
     pp = pierce(ray.origin, ray.direction, I.radius + I.height)
-    stec = above_horizon(ray) ? vtec(I, t, k, geocentric_latlon(pp)...) * mapping_factor(m.mapping, I, pp, ray) : nan_like(I.rms)
+    stec = above_horizon(ray) ? vtec(m, geocentric_latlon(pp)..., t, k) * mapping_factor(m.mapping, I, pp, ray) : nan_like(I.rms) * TECU
     (; stec, pp)
 end
