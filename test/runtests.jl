@@ -273,6 +273,50 @@ end
     @test_throws DomainError vtec(grids[1], 0.0°, 20.0°, t0 + Minute(61))
 end
 
+@testitem "grid interpolation: polar caps" setup=[Track] begin
+    using Dates, AxisKeys, StaticArrays, Uncertain
+    using Unitful: @u_str, °
+    using IonosphericRM: ecef
+    using .Track: TECU
+    t = DateTime(2025, 1, 1)
+    # rows at 60, 30, 0, -30, -60°, columns at -180, -90, 0, 90°; ring means: TEC 3 (north), 25 (south), RMS 2 (north)
+    tec = [1 2 3 6; 7 7 7 7; 8 8 8 8; 9 9 9 9; 10 20 30 40]
+    rms = [1 1 1 5; 1 1 1 1; 1 1 1 1; 1 1 1 1; 1 1 1 1]
+    keyed(M, lats, lons) = KeyedArray(reshape(M, size(M)..., 1); lat=lats * °, lon=lons * °, epoch=[t])
+    gmap(T, R, lats, lons) = GlobalMap((; tec=keyed(T, lats, lons), rms=keyed(R, lats, lons)), SLM())
+    grids = [gmap(tec, rms, 60.0:-30.0:-60.0, -180.0:90.0:90.0),
+             gmap(reverse(tec; dims=1), reverse(rms; dims=1), -60.0:30.0:60.0, -180.0:90.0:90.0),   # ascending latitudes
+             gmap([tec tec[:, 1]], [rms rms[:, 1]], 60.0:-30.0:-60.0, -180.0:90.0:180.0),          # repeated ±180 column
+             gmap(circshift(tec, (0, -2)), circshift(rms, (0, -2)), 60.0:-30.0:-60.0, 0.0:90.0:270.0)]
+    # (lat, lon) => (TEC, RMS): poles at any longitude; the 60° row from the cap side; inside the caps
+    # T = w·ring(lon) + (1 − w)·P, w = (90° − |lat|) / 30°
+    cases = [(90.0, 0.0) => (3, 2), (90.0, -135.0) => (3, 2), (90.0, 171.0) => (3, 2), (-90.0, 0.0) => (25, 1), (-90.0, 100.0) => (25, 1),
+             (60.0, -135.0) => (1.5, 1), (60.0 + 1e-12, -135.0) => (1.5, 1), (-60.0 - 1e-12, 45.0) => (35, 1),
+             (75.0, -135.0) => (2.25, 1.5), (80.0, 45.0) => (3.5, 7/3), (-70.0, 112.5) => (30, 1)]
+    @testset for m in grids
+        v = [vtec(m, lat * °, lon * °, t) for ((lat, lon), _) in cases]
+        @test U.value.(v) ≈ [T for (_, (T, _)) in cases] .* TECU rtol=1e-12
+        @test U.uncertainty.(v) ≈ [σ for (_, (_, σ)) in cases] .* TECU rtol=1e-12
+        @test_throws DomainError vtec(m, 90.5°, 0.0°, t)
+    end
+    # beyond the grid otherwise: not all longitudes, or the outermost row not one step from the pole
+    @test_throws DomainError vtec(gmap(tec[:, 1:3], rms[:, 1:3], 60.0:-30.0:-60.0, -180.0:90.0:0.0), 75.0°, -135.0°, t)
+    @test_throws DomainError vtec(gmap(tec, rms, 50.0:-25.0:-50.0, -180.0:90.0:90.0), 60.0°, 0.0°, t)
+    @test_throws DomainError vtec(gmap(tec, rms, 50.0:-25.0:-50.0, -180.0:90.0:90.0), -60.0°, 0.0°, t)
+
+    # CODE final GIM 2025-243, its rows 87.5–80°N and maps 06:00–07:00: from Ny-Ålesund (78.93°N, 11.87°E, 87 m) north
+    # at 12° geodetic elevation, the ray crosses the pole and pierces the shell in the cap at 88.846°N, 168.13°W.
+    # Reference: numpy, own WGS84 site and pierce point, ring and pole mean read from the file text, 06:20 between the
+    # two rotated maps, times 1/cos z′ at the pierce point
+    m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252430000_01D_01H_GIM_polar.INX.gz"); mapping=SLM())
+    lat, lon = 78.93°, 11.87°
+    up = SVector(cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat))
+    north = SVector(-sin(lat) * cos(lon), -sin(lat) * sin(lon), cos(lat))
+    s = @inferred ionospheric_tec(m, Ray(ecef((; lat, lon, h=87.0u"m")), cosd(12) * north + sind(12) * up), DateTime(2025, 8, 31, 6, 20))
+    @test U.value(s) ≈ 40.244515712906505TECU rtol=1e-12
+    @test U.uncertainty(s) ≈ 7.990758323319431TECU rtol=1e-12
+end
+
 @testitem "grid interpolation: real maps across the ±180 seam" setup=[Track] begin
     using Dates, Uncertain, Unitful
     using .Track: TECU

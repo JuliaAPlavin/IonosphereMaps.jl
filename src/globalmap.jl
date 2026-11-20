@@ -20,8 +20,10 @@ maps blended in time after rotating each with the Sun (IONEX method 3), also acr
 `mapping` (`SLM()`, `MSLM()` or `Petrov2023()`) converts VTEC to slant TEC; [`vtec`](@ref) looks up the VTEC itself.
 The files' MAPPING FUNCTION record (COSZ or NONE in practice) is used only to check that joined files agree.
 CODE produces its maps with MSLM; Petrov2023 is fitted to VLBI astrometry and includes its scale factor k = 0.85.
-Points beyond the grid (e.g. pierce points past ±87.5° latitude, or outside a regional map), and times outside the maps,
-are an error.
+Points beyond the grid (e.g. outside a regional map) and times outside the maps are an error, except the polar caps
+of a map covering all longitudes whose outermost row lies one grid step from the pole (e.g. 87.5° for a 2.5° step):
+there the pole is a node valued the mean of that row, and a point in the cap blends linearly in latitude between the row,
+interpolated in longitude, and the pole.
 For a regional map, the rotation with the Sun can move a point inside the grid outside it near the east and west edges
 between map epochs: also an error.
 A missing map node (9999 or `nan` in IONEX) gives NaN throughout its grid cells.
@@ -66,15 +68,24 @@ end
 
 # map M[lat, lon] at lat, lon
 function bilinear(M, lat, lon)
-    (i, p) = gridcell(axiskeys(M, :lat), lat)
+    mlats, mlons = axiskeys(M, :lat), axiskeys(M, :lon)
     # a full circle without a repeated end column closes on its first column;
     # either side of a repeated (e.g. ±180) column interpolates from its own copy
-    mlons = axiskeys(M, :lon)
     closed = length(mlons) * step(mlons) ≈ 360u"°"
     lons = range(first(mlons); step=step(mlons), length=length(mlons) + closed)
     (j, q) = gridcell(lons, first(lons) + mod(lon - first(lons), 360u"°"))
     j1 = mod1(j + 1, length(mlons))
-    (1-p)*(1-q)*M[i,j] + p*(1-q)*M[i+1,j] + (1-p)*q*M[i,j1] + p*q*M[i+1,j1]
+    # the columns of distinct longitudes
+    ring = 1:length(mlons) - !closed
+    # in a map covering all longitudes, a pole one step beyond an outermost row is a node too: the mean of that row
+    ispole(x) = length(ring) * step(mlons) ≈ 360u"°" && abs(x) ≈ 90u"°"
+    before, after = ispole(first(mlats) - step(mlats)), ispole(last(mlats) + step(mlats))
+    lats = range(first(mlats) - before * step(mlats); step=step(mlats), length=length(mlats) + before + after)
+    (i, p) = gridcell(lats, lat)
+    n = size(M, 1)
+    # row r of M interpolated in longitude; r = 0 or n + 1 is the pole next to row 1 or n
+    row(r) = 1 <= r <= n ? (1-q)*M[r,j] + q*M[r,j1] : sum(view(M, clamp(r, 1, n), ring)) / length(ring)
+    (1-p)*row(i - before) + p*row(i + 1 - before)
 end
 
 # index k of the map interval Tₖ ≤ t < Tₖ₊₁ of the maps I, or of the last map at its epoch
