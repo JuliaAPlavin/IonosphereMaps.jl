@@ -25,7 +25,7 @@ VTEC at the pierce point of the shell is interpolated bilinearly in each map, an
 
 Geometries:
 - `LineOfSight(site, source)`: a geodetic WGS84 `site` `(; lat, lon, h)`, looking toward a source represented as `SkyCoords`.
-- `Ray(origin, direction)`: an ECEF origin (Unitful lengths) inside the shell and an Earth-fixed unit direction. `Ray(los::LineOfSight, t)` is the ray of `los` at time `t`.
+- `Ray(origin, direction)`: an ECEF origin (Unitful lengths) inside the shell and an Earth-fixed unit direction; `Ray(site, direction)` from a geodetic site. `Ray(los::LineOfSight, t)` is the ray of `los` at time `t`.
 
 Slant TEC is VTEC times the mapping factor. Available mappings:
 - `SLM()`: the IONEX single layer, exact `1/cos z′` at the pierce point on the map's shell.

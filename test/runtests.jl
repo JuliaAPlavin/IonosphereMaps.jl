@@ -4,7 +4,7 @@ using TestItemRunner
 
 @testmodule Track begin
     using Dates, AxisKeys, SkyCoords, StaticArrays, Unitful, UnitfulAngles, IonosphereMaps
-    using IonosphereMaps: ecef, source_direction
+    using IonosphereMaps: source_direction
     # MeerKAT array centre and 3C138 (J2000); MeerKAT 2025-07-25 scan mid-times (UTC)
     const DATA = joinpath(@__DIR__, "data")
     const SITE = (; lat=-30.71292u"°", lon=21.44380u"°", h=1050.0u"m")
@@ -12,7 +12,7 @@ using TestItemRunner
     const SCANS = DateTime(2025, 7, 25) .+ Minute.([366, 386, 403, 424, 441, 462, 479, 500, 517, 537, 555, 574, 593, 612])
     const LOS = LineOfSight(SITE, SRC)
     # the same line of sight as an Earth-fixed ray, at time t
-    ray(t) = Ray(ecef(SITE), source_direction(SRC, t))
+    ray(t) = Ray(SITE, source_direction(SRC, t))
     const GEOMETRIES = [Returns(LOS), ray]
     const TECU = 1e16u"m^-2"
     # maps of 1 TECU everywhere at time T: slant TEC in TECU is the mapping factor
@@ -193,7 +193,7 @@ end
     end
 
     # an ECEF origin with length units, a unit direction
-    @test_throws MethodError Ray(SVector(0.0, 6378137.0, 0.0), SVector(0.0, 1.0, 0.0))
+    @test_throws "lat" Ray(SVector(0.0, 6378137.0, 0.0), SVector(0.0, 1.0, 0.0))   # not ECEF lengths: taken as a site
     @test_throws ArgumentError Ray(SVector(0.0, 6378137.0, 0.0)u"m", SVector(0.0, 1.0, 1.0))
 end
 
@@ -227,7 +227,7 @@ end
     @testset for (mapping, own, other, zenith) in [(SLM(), geocentric, geodetic, 1), (MSLM(), geodetic, geocentric, 1),
                                                    (Petrov2023(), geocentric, geodetic, 0.8504277878317943)]
         m = GlobalMap(Track.uniform(), mapping)
-        factors(up) = [ionospheric_tec(m, Ray(ecef(site), s * up(site)), Track.T) / TECU for site in sites for s in 1 .+ (-4:4) .* eps()]
+        factors(up) = [ionospheric_tec(m, Ray(site, s * up(site)), Track.T) / TECU for site in sites for s in 1 .+ (-4:4) .* eps()]
         @test factors(own) ≈ fill(zenith, 9length(sites)) rtol=1e-14
         @test factors(other) ≈ fill(zenith, 9length(sites)) rtol=2e-4
     end
@@ -319,7 +319,6 @@ end
 @testitem "grid interpolation: polar caps" setup=[Track] begin
     using Dates, AxisKeys, Uncertain
     using Unitful: @u_str, °
-    using IonosphereMaps: ecef
     using .Track: TECU
     t = DateTime(2025, 1, 1)
     # rows at 60, 30, 0, -30, -60°, columns at -180, -90, 0, 90°; ring means: TEC 3 (north), 25 (south), RMS 2 (north)
@@ -357,7 +356,7 @@ end
     m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252430000_01D_01H_GIM_polar.INX.gz"); mapping=SLM())
     lat, lon = 78.93°, 11.87°
     (; up, north) = Track.enu(lat, lon)
-    s = @inferred ionospheric_tec(m, Ray(ecef((; lat, lon, h=87.0u"m")), cosd(12) * north + sind(12) * up), DateTime(2025, 8, 31, 6, 20))
+    s = @inferred ionospheric_tec(m, Ray((; lat, lon, h=87.0u"m"), cosd(12) * north + sind(12) * up), DateTime(2025, 8, 31, 6, 20))
     @test U.value(s) ≈ 40.244515712906505TECU rtol=1e-12
     @test U.uncertainty(s) ≈ 7.990758323319431TECU rtol=1e-12
 end

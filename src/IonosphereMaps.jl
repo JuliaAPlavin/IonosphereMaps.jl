@@ -21,9 +21,14 @@ From `origin`, an Earth-fixed (ECEF, ITRF/WGS84) position as an `SVector{3}` of 
 along `direction`, an Earth-fixed unit `SVector{3}`. The origin must be inside the model's ionospheric shell:
 an origin at or above it is an error.
 
+    Ray(site, direction)
+
+From the geodetic WGS84 `site`, as [`LineOfSight`](@ref) takes it, along the Earth-fixed unit `direction`.
+
     Ray(los::LineOfSight, t::DateTime)
 
-The ray of `los` at UTC `t`: from the site's ECEF position toward the source's Earth-fixed direction at `t`.
+The ray of `los` at UTC `t`: from the site's ECEF position toward the source's Earth-fixed direction at `t`;
+`Ray(ray::Ray, t)` is `ray` itself.
 """
 struct Ray{O, D}
     origin::O
@@ -34,6 +39,7 @@ struct Ray{O, D}
         new{typeof(origin), typeof(direction)}(origin, direction)
     end
 end
+Ray(site, direction) = Ray(ecef(site), direction)
 
 """
     LineOfSight(site, source)
@@ -46,7 +52,8 @@ struct LineOfSight{S, C<:AbstractSkyCoords}
     source::C
 end
 
-Ray(los::LineOfSight, t::DateTime) = Ray(ecef(los.site), source_direction(convert(ICRSCoords, los.source), t))
+Ray(los::LineOfSight, t::DateTime) = Ray(los.site, source_direction(convert(ICRSCoords, los.source), t))
+Ray(ray::Ray, t::DateTime) = ray
 
 include("geometry.jl")
 include("io.jl")
@@ -59,8 +66,7 @@ Ionospheric total electron content (m⁻²) along a `Ray` or `LineOfSight` at UT
 its mapping included; NaN below the geodetic horizon of the ray origin. For maps with RMS maps, returns `tec ±ᵤ σ`
 (`Uncertain.Value`), σ from the map RMS. For a map's own vertical TEC, see [`vtec`](@ref).
 """
-ionospheric_tec(model, ray::Ray, t::DateTime) = slant_tec(model, ray, t).stec
-ionospheric_tec(model, los::LineOfSight, t::DateTime) = ionospheric_tec(model, Ray(los, t), t)
+ionospheric_tec(model, geometry, t::DateTime) = slant_tec(model, Ray(geometry, t), t).stec
 
 """
     ionospheric_group_delay(model, geometry, t::DateTime, ν)
@@ -83,10 +89,10 @@ Positive when that field points toward the observer, NaN below the geodetic hori
 For maps with RMS maps, returns `rm ±ᵤ σ` (`Uncertain.Value`); σ covers the map RMS only, not the thin-shell
 and mapping approximations or the field model.
 """
-function ionospheric_rm(model, ray::Ray, t::DateTime)
+function ionospheric_rm(model, geometry, t::DateTime)
+    ray = Ray(geometry, t)
     (; stec, pp) = slant_tec(model, ray, t)
     uconvert(u"rad/m^2", K_RM * stec * bpar(pp, ray.direction, t))
 end
-ionospheric_rm(model, los::LineOfSight, t::DateTime) = ionospheric_rm(model, Ray(los, t), t)
 
 end
