@@ -19,6 +19,8 @@ Thin-shell model from IONEX global ionosphere maps: VTEC bilinearly interpolated
 maps blended in time after rotating each with the Sun (IONEX method 3), also across file boundaries.
 `mapping` (`SLM()`, `MSLM()` or `Petrov2023()`) converts VTEC to slant TEC; [`vtec`](@ref) looks up the VTEC itself.
 The files' MAPPING FUNCTION record (COSZ or NONE in practice) is used only to check that joined files agree.
+Supported are 2-D TEC maps with ascending longitudes and their RMS maps, if any, paired by map number;
+height maps, 3-D maps or descending longitudes are an error.
 CODE produces its maps with MSLM; Petrov2023 is fitted to VLBI astrometry and includes its scale factor k = 0.85.
 Points beyond the grid (e.g. outside a regional map) and times outside the maps are an error, except the polar caps
 of a map covering all longitudes whose outermost row lies one grid step from the pole (e.g. 87.5° for a 2.5° step):
@@ -29,7 +31,8 @@ between map epochs: also an error.
 A missing map node (9999 or `nan` in IONEX) gives NaN wherever it enters the interpolation.
 
 `paths` are files of consecutive periods in time order, e.g. the daily files of an observation crossing
-midnight. They must share grid, base radius, shell height and mapping function, with gaps of at most one map interval.
+midnight. They must share grid, base radius, shell height and mapping function, all or none have RMS maps,
+and gaps are at most one map interval.
 Where files overlap (normally the midnight map of two daily solutions), the later file's maps are used:
 IONEX maps cover `Tᵢ ≤ t < Tᵢ₊₁`, so a day's 24:00 map only closes its last interval. This keeps TEC continuous.
 """
@@ -43,9 +46,10 @@ GlobalMap(path::AbstractString; mapping) = GlobalMap((path,); mapping)
 # `b`'s maps from its first epoch on replace `a`'s
 function append_ionex(a, b)
     for (k, x, y) in [(:lat, axiskeys(a.tec, :lat), axiskeys(b.tec, :lat)), (:lon, axiskeys(a.tec, :lon), axiskeys(b.tec, :lon)),
-                      (:radius, a.radius, b.radius), (:height, a.height, b.height), (:mapping, a.mapping, b.mapping)]
+                      (:radius, a.radius, b.radius), (:height, a.height, b.height), (:mapping_function, a.mapping_function, b.mapping_function)]
         x == y || throw(ArgumentError("IONEX files differ in $k: $x vs $y"))
     end
+    isnothing(a.rms) == isnothing(b.rms) || throw(ArgumentError("IONEX files differ in RMS maps: present in one, absent in the other"))
     ea, eb = axiskeys(a.tec, :epoch), axiskeys(b.tec, :epoch)
     first(ea) < first(eb) && last(ea) < last(eb) ||
         throw(ArgumentError("IONEX files not in time order: $(first(ea))–$(last(ea)) followed by $(first(eb))–$(last(eb))"))
@@ -78,8 +82,8 @@ function bilinear(M, lat, lon)
     # the columns of distinct longitudes
     ring = 1:length(mlons) - !closed
     # in a map covering all longitudes, a pole one step beyond an outermost row is a node too: the mean of that row
-    ispole(x) = length(ring) * step(mlons) ≈ 360u"°" && abs(x) ≈ 90u"°"
-    before, after = ispole(first(mlats) - step(mlats)), ispole(last(mlats) + step(mlats))
+    fullring = length(ring) * step(mlons) ≈ 360u"°"
+    before, after = map(x -> fullring && abs(x) ≈ 90u"°", (first(mlats) - step(mlats), last(mlats) + step(mlats)))
     lats = range(first(mlats) - before * step(mlats); step=step(mlats), length=length(mlats) + before + after)
     (i, p) = gridcell(lats, lat)
     n = size(M, 1)
@@ -99,9 +103,9 @@ end
 function interpolate(A, lat, lon, t, k)
     epochs = axiskeys(A, :epoch)
     t == epochs[k] && return bilinear(view(A, :, :, k), lat, lon)
-    w = (t - epochs[k]) /ₜ (epochs[k+1] - epochs[k])
-    e0 = bilinear(view(A, :, :, k), lat, lon + 360u"°" * ((t - epochs[k]) /ₜ Day))
-    e1 = bilinear(view(A, :, :, k+1), lat, lon + 360u"°" * ((t - epochs[k+1]) /ₜ Day))
+    w = (t - epochs[k]) / (epochs[k+1] - epochs[k])
+    e0 = bilinear(view(A, :, :, k), lat, lon + 360u"°" * ((t - epochs[k]) / Day(1)))
+    e1 = bilinear(view(A, :, :, k+1), lat, lon + 360u"°" * ((t - epochs[k+1]) / Day(1)))
     (1 - w) * e0 + w * e1
 end
 interpolate(::Nothing, lat, lon, t, k) = nothing
@@ -114,10 +118,10 @@ or plain radians) at UTC `t`, interpolated as described in [`GlobalMap`](@ref). 
 `tec ±ᵤ σ` (`Uncertain.Value`), σ from the map RMS. This is the maps' own data, not a model prediction:
 the mapping of `m` plays no role (e.g. no scale factor k of `Petrov2023`).
 """
-vtec(m::GlobalMap, lat, lon, t::DateTime) = vtec(m, lat, lon, t, mapindex(m.ionex, t))
-# t in the map interval k (from mapindex)
+vtec(m::GlobalMap, lat, lon, t::DateTime) = vtec_in_interval(m, lat, lon, t, mapindex(m.ionex, t))
+# VTEC at t in the map interval k (from mapindex)
 # RMS is interpolated with the TEC weights: errors at neighbouring nodes of a smooth map are close to fully correlated.
-function vtec(m::GlobalMap, lat, lon, t, k)
+function vtec_in_interval(m::GlobalMap, lat, lon, t, k)
     (; tec, rms) = m.ionex
     lat, lon = uconvert(u"°", lat), uconvert(u"°", lon)
     with_rms(interpolate(tec, lat, lon, t, k), interpolate(rms, lat, lon, t, k)) * TECU
@@ -129,17 +133,18 @@ with_rms(v, ::Nothing) = v
 nan_like(::Nothing) = NaN
 nan_like(rms::AbstractArray) = NaN ±ᵤ NaN
 
-# mapping from VTEC to slant TEC for `ray`, piercing the shell of the maps `I` at pp
-mapping_factor(::SLM, I, pp, ray) = norm(pp) / dot(pp, ray.direction)
-function mapping_factor(::MSLM, I, pp, ray)
+# mapping from VTEC to slant TEC for `ray`, piercing the shell of the maps `I` at pp, `up` the geodetic up at its origin;
+# angles from the vertical as atan(sin, cos): accurate near the zenith, not limited to an exactly unit direction
+mapping_factor(::SLM, I, pp, ray, up) = norm(pp) / dot(pp, ray.direction)
+function mapping_factor(::MSLM, I, pp, ray, up)
     R, H, α = 6371u"km", 506.7u"km", 0.9782
-    z = acos(dot(ray.direction, geodetic_up(ray.origin)))
+    z = atan(norm(cross(ray.direction, up)), dot(ray.direction, up))
     1 / sqrt(1 - (R / (R + H) * sin(α * z))^2)
 end
-function mapping_factor(::Petrov2023, I, pp, ray)
+function mapping_factor(::Petrov2023, I, pp, ray, up)
     k, ΔH, α = 0.85, 56.7u"km", 0.9782
     R, H = I.radius, I.height
-    e = asin(dot(ray.direction, ray.origin) / norm(ray.origin))
+    e = atan(dot(ray.direction, ray.origin), norm(cross(ray.direction, ray.origin)))
     k / sqrt(1 - (R / (R + H + ΔH) * cos(α * e))^2)
 end
 
@@ -148,6 +153,9 @@ function slant_tec(m::GlobalMap, ray, t)
     I = m.ionex
     k = mapindex(I, t)
     pp = pierce(ray.origin, ray.direction, I.radius + I.height)
-    stec = above_horizon(ray) ? vtec(m, geocentric_latlon(pp)..., t, k) * mapping_factor(m.mapping, I, pp, ray) : nan_like(I.rms) * TECU
+    up = geodetic_up(ray.origin)
+    # NaN below the geodetic horizon of the ray origin
+    stec = dot(ray.direction, up) > 0 ? vtec_in_interval(m, geocentric_latlon(pp)..., t, k) * mapping_factor(m.mapping, I, pp, ray, up) :
+           nan_like(I.rms) * TECU
     (; stec, pp)
 end

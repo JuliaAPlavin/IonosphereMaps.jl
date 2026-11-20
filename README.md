@@ -19,7 +19,8 @@ vtec(m, -30u"°", 21u"°", t)                     # 1.639e17 m^-2 ±ᵤ 2.21e16 
 
 ## Model
 
-`GlobalMap(paths; mapping)` reads IONEX files (plain, `.gz`, or `.Z` through the `gzip` executable).
+`GlobalMap(paths; mapping)` reads IONEX files (plain, `.gz`, or `.Z`; decompressed by Gzip_jll, no system `gzip` needed):
+2-D TEC maps with ascending longitudes, and their RMS maps if present.
 VTEC at the pierce point of the shell is interpolated bilinearly in each map, and in time between maps rotated with the Sun (IONEX method 3).
 Slant TEC is VTEC times the mapping factor; RM is `K·TEC·B∥` with the IGRF field at the pierce point;
 group delay is `K·TEC / (c ν²)` at the cyclic frequency `ν`.
@@ -45,7 +46,10 @@ The RMS is interpolated with the same weights as the TEC (errors of neighbouring
 
 ## Behaviour
 
-- Several files of consecutive periods (e.g. the daily files around midnight) join into one model: same grid and shell, gaps of at most one map interval.
+- RMS map i belongs to TEC map i, by the map number in its `START OF RMS MAP` record; its epoch record is optional and, if present, must be the TEC map's.
+- Height maps, 3-D maps and descending longitudes (negative DLON) are not supported: an error (`ArgumentError`).
+- Several files of consecutive periods (e.g. the daily files around midnight) join into one model: same grid, shell and mapping function,
+  RMS maps in all or none, gaps of at most one map interval.
   Where they overlap, the later file's maps are used, so TEC is continuous.
 - A time outside the maps, a point outside the grid, and a ray origin at or above the shell are errors (`DomainError`).
 - Below the geodetic horizon of the ray origin, results are NaN.

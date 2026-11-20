@@ -2,7 +2,8 @@ module IonosphericRM
 
 using Dates
 using AxisKeys: KeyedArray, axiskeys
-using DateFormats: /ₜ, julian_day, yeardecimal
+using DateFormats: julian_day, yeardecimal
+using Gzip_jll: gzip
 using LinearAlgebra
 using StaticArrays
 using SkyCoords: AbstractSkyCoords, ICRSCoords, cartesian

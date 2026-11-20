@@ -84,7 +84,7 @@ end
 end
 
 @testitem "RMS maps: VTEC and RM uncertainties" setup=[Track] begin
-    using Dates, Uncertain, Unitful
+    using Dates, StaticArrays, Uncertain, Unitful
     using .Track: TECU
     points = [(-23.98, 24.26), (-39.17, 26.65), (-30.85, 21.34), (-25.0, 40.0)]
     # spinifex 2.0 interpolate_ionex: (TEC, RMS) in TECU, Earth rotation on, UQRG RMS correction off
@@ -124,8 +124,11 @@ end
     v = @inferred vtec(m, -23.98u"°", 24.26u"°", t)
     @test U.value(v) ≈ 14.669162e16u"m^-2" rtol=1e-6
     @test U.uncertainty(v) ≈ 1.314800e16u"m^-2" rtol=1e-6
-    @test vtec(m, deg2rad(-23.98), deg2rad(24.26), t) == v
-    @test vtec(GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"); mapping=Petrov2023()), -23.98u"°", 24.26u"°", t) == v
+    @testset for v′ in [vtec(m, deg2rad(-23.98), deg2rad(24.26), t),
+                        vtec(GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"); mapping=Petrov2023()), -23.98u"°", 24.26u"°", t)]
+        @test U.value(v′) ≈ U.value(v) rtol=1e-14
+        @test U.uncertainty(v′) ≈ U.uncertainty(v) rtol=1e-14
+    end
     # slant TEC along the line of sight, in m⁻²: spinifex VTEC and RMS × its airmass at the same three times;
     # its line of sight includes aberration, 15″ here, ours does not
     @testset for geometry in Track.GEOMETRIES
@@ -135,6 +138,18 @@ end
         t = DateTime(2025, 7, 25, 8)
         @test (@inferred ionospheric_tec(m, geometry(t), t)) isa Uncertain.Value
     end
+    # the same as Earth-fixed rays from pyerfa 2.0.1.5 (ERFA): WGS84 site by gd2gc, direction by c2t06a with UT1 = UTC and
+    # no polar motion; spinifex's aberration (15″) within the tolerances as above
+    o = SVector(5109235.6826773705, 2006794.5550174904, -3239107.174939906)u"m"
+    rays = [DateTime(2025, 7, 25, 6, 6) => Ray(o, SVector(0.6660455275449196, 0.6885773448827321, 0.2867831852665993)),
+            DateTime(2025, 7, 25, 8, 0) => Ray(o, SVector(0.9142833503085985, 0.28607925878610074, 0.28678321610735774)),
+            DateTime(2025, 7, 25, 10, 12) => Ray(o, SVector(0.9221844372582138, -0.25948262020540175, 0.28678325176008934))]
+    rm = [ionospheric_rm(m, ray, t) for (t, ray) in rays]
+    @test U.value.(rm) ≈ [-1.045650, -1.843167, -2.561181]u"rad/m^2" atol=3e-4u"rad/m^2"
+    @test U.uncertainty.(rm) ≈ [0.105383, 0.106252, 0.136799]u"rad/m^2" atol=3e-5u"rad/m^2"
+    s = [ionospheric_tec(m, ray, t) for (t, ray) in rays]
+    @test U.value.(s) ≈ [20.35420, 31.72016, 49.29405]u"m^-2" .* 1e16 rtol=1e-4
+    @test U.uncertainty.(s) ≈ [2.05135, 1.82856, 2.63291]u"m^-2" .* 1e16 rtol=1e-4
 end
 
 @testitem "Ray: vertical at a grid node, geodetic horizon, construction" setup=[Track] begin
@@ -143,8 +158,8 @@ end
     # its VTEC and RMS in the 06:00 maps of the file are 719 and 25 (× 0.1 TECU)
     m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_seam.INX.gz"); mapping=SLM())
     v = @inferred ionospheric_tec(m, Ray(SVector(0.0, 6378137.0, 0.0)u"m", SVector(0.0, 1.0, 0.0)), DateTime(2025, 7, 25, 6))
-    @test U.value(v) == 71.9e16u"m^-2"
-    @test U.uncertainty(v) == 2.5e16u"m^-2"
+    @test U.value(v) ≈ 71.9e16u"m^-2" rtol=1e-14
+    @test U.uncertainty(v) ≈ 2.5e16u"m^-2" rtol=1e-14
 
     # at MeerKAT, toward the north at -0.05° geodetic elevation: below the geodetic horizon,
     # above the geocentric one (+0.12°)
@@ -197,6 +212,28 @@ end
     @test factor(uniform(6378.137u"km", 350.0u"km"), 6378.137u"km", 10) ≈ 2.25724822057 rtol=1e-11
 end
 
+@testitem "mapping factors at the zenith" begin
+    using Dates, AxisKeys, LinearAlgebra, StaticArrays, Unitful
+    using IonosphericRM: ecef
+    # a map of 1 TECU everywhere: slant TEC in TECU is the mapping factor
+    t = DateTime(2025, 1, 1)
+    uniform = (; tec=KeyedArray(ones(71, 73, 1); lat=(87.5:-2.5:-87.5)u"°", lon=(-180.0:5.0:180.0)u"°", epoch=[t]),
+               rms=nothing, radius=6371.0u"km", height=450.0u"km")
+    sites = [(; lat, lon, h) for lat in (-89.9:9.99:89.9)u"°" for lon in (-179.0:47.0:179.0)u"°" for h in (0.0u"m", 3000.0u"m")]
+    geocentric(site) = normalize(ustrip.(u"m", ecef(site)))
+    geodetic(site) = SVector(cos(site.lat) * cos(site.lon), cos(site.lat) * sin(site.lon), sin(site.lat))
+    # toward the vertical each mapping is defined from (SLM and Petrov2023 the geocentric, MSLM the geodetic) its zenith factor,
+    # toward the other one (up to 0.19° away) close to it; Petrov2023 eq. 12 at e = 90° in 256-bit BigFloat.
+    # Directions off unit length by a few eps, as Ray allows.
+    @testset for (mapping, own, other, zenith) in [(SLM(), geocentric, geodetic, 1), (MSLM(), geodetic, geocentric, 1),
+                                                   (Petrov2023(), geocentric, geodetic, 0.8504277878317943)]
+        m = GlobalMap(uniform, mapping)
+        factors(up) = [ionospheric_tec(m, Ray(ecef(site), s * up(site)), t) / 1e16u"m^-2" for site in sites for s in 1 .+ (-4:4) .* eps()]
+        @test factors(own) ≈ fill(zenith, 9length(sites)) rtol=1e-14
+        @test factors(other) ≈ fill(zenith, 9length(sites)) rtol=2e-4
+    end
+end
+
 @testitem "group delay" setup=[Track] begin
     using Dates, AxisKeys, SkyCoords, StaticArrays, Uncertain, Unitful
     t = DateTime(2025, 1, 1)
@@ -226,6 +263,15 @@ end
     m0 = GlobalMap(joinpath(Track.DATA, "codg0600.21i_crop.gz"); mapping=MSLM())
     @test isnan(@inferred ionospheric_group_delay(m0, Track.LOS, DateTime(2021, 3, 1, 3), 1u"GHz"))
     @test_throws MethodError ionospheric_group_delay(m, Track.LOS, DateTime(2025, 7, 25, 8), 1e9)
+
+    # end to end with Petrov2023 at 8.4 GHz, HartRAO (ITRF) toward geodetic azimuth and elevation (150°, 40°), (290°, 25°),
+    # (10°, 70°): Fringy's separate implementation (load_ionex, slant_ionosphere_delay); its times are Float64 MJD
+    m = GlobalMap(joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz"); mapping=Petrov2023())
+    o = SVector(5085442.780, 2668263.483, -2768697.034)u"m"
+    fringy = [(DateTime(2025, 7, 25, 7, 20), SVector(0.07760144503488164, 0.47325961399726224, -0.8774983495640665), 4.6544321354083685e-10),
+              (DateTime(2025, 7, 25, 11, 47, 30), SVector(0.8522170639070772, -0.5146138546863792, 0.0943326907833491), 1.0402096333586052e-9),
+              (DateTime(2025, 7, 25, 4, 0), SVector(0.8512344876264596, 0.5137011576154833, -0.10728917811145411), 1.0567109692946289e-10)]
+    @test [U.value(ionospheric_group_delay(m, Ray(o, d), t, 8.4u"GHz")) for (t, d, _) in fringy] ≈ last.(fringy) .* u"s" rtol=1e-8
 end
 
 @testitem "grid interpolation: longitude wrap, seam, grid edges, map epochs" setup=[Track] begin
@@ -347,9 +393,10 @@ end
 
 @testitem "gzip, unix compress and plain files read alike" setup=[Track] begin
     using IonosphericRM: read_ionex
+    using Gzip_jll: gzip
     gz, Z = joinpath.(Track.DATA, ["codg0590.21i_crop.gz", "codg0590.21i_crop.Z"])
     plain = tempname()
-    write(plain, read(`gzip -dc $gz`))
+    write(plain, read(`$(gzip()) -dc $gz`))
     @test isequal(read_ionex(Z), read_ionex(gz))
     @test isequal(read_ionex(plain), read_ionex(gz))
 end
@@ -385,8 +432,8 @@ end
     midnight = DateTime(2021, 3, 1)
     @test [rm(m59, midnight), rm(m60, midnight)] ≈ [-0.4833, -0.4795]u"rad/m^2" atol=1e-4u"rad/m^2"
     @test rm(m, midnight - Millisecond(1)) ≈ rm(m, midnight) atol=1e-7u"rad/m^2"
-    @test rm(m, midnight - Hour(1)) == rm(m59, midnight - Hour(1))
-    @test rm.(Ref(m), midnight .+ Minute.(0:30:360)) == rm.(Ref(m60), midnight .+ Minute.(0:30:360))
+    @test rm(m, midnight - Hour(1)) ≈ rm(m59, midnight - Hour(1)) rtol=1e-14
+    @test rm.(Ref(m), midnight .+ Minute.(0:30:360)) ≈ rm.(Ref(m60), midnight .+ Minute.(0:30:360)) rtol=1e-14
     @test_throws DomainError vtec(m, -30.0u"°", 21.0u"°", DateTime(2021, 3, 1, 6, 30))
     @test_throws DomainError vtec(m, -30.0u"°", 21.0u"°", DateTime(2021, 2, 28, 20, 30))
 end
@@ -403,6 +450,7 @@ end
 @testitem "IONEX records: fixed-width fields, record order, completeness, missing values" setup=[Track] begin
     using Dates, AxisKeys, Unitful
     using IonosphericRM: read_ionex, headerlabel
+    using Gzip_jll: gzip
     day59, day60, day60e2, day60e3 = joinpath.(Track.DATA, ["codg0590.21i_crop.gz", "codg0600.21i_crop.gz", "codg0600.21i_crop_exp2.gz", "codg0600.21i_crop_exp3.gz"])
     ref = read_ionex(day60)
     # exponent -3: values from 10000 fill all 5 columns and touch their neighbours
@@ -410,7 +458,7 @@ end
 
     function rewritten(f, path)
         out = tempname()
-        write(out, join(f(readlines(`gzip -dc $path`)), "\n"))
+        write(out, join(f(readlines(`$(gzip()) -dc $path`)), "\n"))
         out
     end
     starts(lines) = findall(l -> headerlabel(l) == "START OF TEC MAP", lines)
@@ -425,9 +473,18 @@ end
     @test_throws ArgumentError("$cut has no END OF TEC MAP record from line 837 on") read_ionex(cut)
     nolon = rewritten(ls -> filter(l -> headerlabel(l) != "LON1 / LON2 / DLON", ls), day60)
     @test_throws ArgumentError("$nolon has no LON1 / LON2 / DLON record from line 1 on") read_ionex(nolon)
-    # 3-D maps
+    # 3-D maps, height maps, descending longitudes
+    record(fields, label) = rpad(fields, 60) * label
     dim3 = rewritten(ls -> map(l -> headerlabel(l) == "MAP DIMENSION" ? "     3" * l[7:end] : l, ls), day60)
     @test_throws ArgumentError("$dim3 has 3-D maps, only 2-D maps are supported") read_ionex(dim3)
+    hgt = rewritten(day60) do ls
+        tec1 = starts(ls)[1]:findnext(l -> headerlabel(l) == "END OF TEC MAP", ls, starts(ls)[1])
+        @assert headerlabel(ls[end]) == "END OF FILE"
+        [ls[1:end-1]; record("     1", "START OF HEIGHT MAP"); ls[tec1[3:end-1]]; record("     1", "END OF HEIGHT MAP"); ls[end]]
+    end
+    @test_throws ArgumentError("$hgt has height maps, they are not supported") read_ionex(hgt)
+    desc = rewritten(ls -> map(l -> headerlabel(l) == "LON1 / LON2 / DLON" ? record("    55.0 -10.0  -5.0", "LON1 / LON2 / DLON") : l, ls), day60)
+    @test_throws ArgumentError("$desc has descending longitudes (DLON -5.0), only ascending ones are supported") read_ionex(desc)
 
     # map epochs: hour 24 is the next day's 00:00; not increasing is an error
     epochlines(lines) = findall(l -> headerlabel(l) == "EPOCH OF CURRENT MAP", lines)
@@ -443,18 +500,33 @@ end
         reordered = rewritten(ls -> (e = epochlines(ls); ls[[1:e[1]-1; e[order[1]]; e[1]+1:e[2]-1; e[order[2]]; e[2]+1:end]]), day60)
         @test_throws ArgumentError("$reordered has TEC map epochs not strictly increasing: $(DateTime(2021, 3, 1) .+ Hour.(order .- 1))") read_ionex(reordered)
     end
-    # RMS maps at the TEC map epochs: one missing, one at another epoch
+    # TEC maps numbered 1 to n, each with its epoch inside its block
+    renumbered = rewritten(ls -> (i = starts(ls)[2]; [ls[1:i-1]; "     3" * ls[i][7:end]; ls[i+1:end]]), day60)
+    @test_throws ArgumentError("$renumbered has TEC maps numbered $([1, 3, 3, 4, 5, 6, 7]), not 1 to 7") read_ionex(renumbered)
+    outside = rewritten(ls -> (i = starts(ls)[2]; @assert headerlabel(ls[i+1]) == "EPOCH OF CURRENT MAP"; ls[[1:i-1; i+1; i; i+2:end]]), day60)
+    @test_throws ArgumentError("$outside has no EPOCH OF CURRENT MAP in TEC map 2") read_ionex(outside)
+
+    # RMS maps pair with TEC maps by map number, in any order; an RMS map's epoch is optional (IONEX example 1),
+    # if present it is its TEC map's
     cod = joinpath(Track.DATA, "COD0OPSFIN_20252060000_01D_01H_GIM_crop.INX.gz")
-    tecepochs = collect(DateTime(2025, 7, 25, 3):Hour(1):DateTime(2025, 7, 25, 13))
+    codref = read_ionex(cod)
     rmsstarts(lines) = findall(l -> headerlabel(l) == "START OF RMS MAP", lines)
+    rmsblocks(lines) = [i:findnext(l -> headerlabel(l) == "END OF RMS MAP", lines, i) for i in rmsstarts(lines)]
+    noepochs = rewritten(ls -> ls[setdiff(eachindex(ls), rmsstarts(ls) .+ 1)], cod)
+    reversed = rewritten(ls -> (b = rmsblocks(ls); [ls[1:first(b[1])-1]; ls[reduce(vcat, reverse(b))]; ls[last(b[end])+1:end]]), cod)
+    @testset for f in [noepochs, reversed]
+        @test isequal(read_ionex(f), codref)   # identical parsing of the same maps
+    end
     fewer = rewritten(ls -> [ls[1:rmsstarts(ls)[end]-1]; ls[end]], cod)
-    @test_throws ArgumentError("$fewer has RMS maps at $(tecepochs[1:end-1]), its TEC maps at $tecepochs") read_ionex(fewer)
+    @test_throws ArgumentError("$fewer has RMS maps numbered $(collect(1:10)), its TEC maps 1 to 11") read_ionex(fewer)
+    misnumbered = rewritten(ls -> (i = rmsstarts(ls)[2]; [ls[1:i-1]; "     3" * ls[i][7:end]; ls[i+1:end]]), cod)
+    @test_throws ArgumentError("$misnumbered has RMS maps numbered $([1; 3; 3:11]), its TEC maps 1 to 11") read_ionex(misnumbered)
     moved = rewritten(cod) do ls
         e = rmsstarts(ls)[2] + 1
         @assert ls[e][1:36] == "  2025     7    25     4     0     0"
         [ls[1:e-1]; "  2025     7    25     4    30     0" * ls[e][37:end]; ls[e+1:end]]
     end
-    @test_throws ArgumentError("$moved has RMS maps at $([tecepochs[1]; DateTime(2025, 7, 25, 4, 30); tecepochs[3:end]]), its TEC maps at $tecepochs") read_ionex(moved)
+    @test_throws ArgumentError("$moved has RMS map 2 at $(DateTime(2025, 7, 25, 4, 30)), its TEC map at $(DateTime(2025, 7, 25, 4))") read_ionex(moved)
     # row records that disagree with the header grid
     @test_throws AssertionError read_ionex(rewritten(ls -> replace(ls, "   -10.0 -10.0  55.0   5.0 450.0" * " "^28 * "LAT/LON1/LON2/DLON/H" =>
                                                                        "   -10.0  -5.0  60.0   5.0 450.0" * " "^28 * "LAT/LON1/LON2/DLON/H"), day60))
@@ -469,13 +541,14 @@ end
     m = GlobalMap(holed; mapping=SLM())
     @test findall(isnan, m.ionex.tec) == [CartesianIndex(1, 1, 1)]
     @test isnan(vtec(m, -11.0u"°", -8.0u"°", DateTime(2021, 3, 1)))
-    @test vtec(m, -11.0u"°", 0.0u"°", DateTime(2021, 3, 1)) == vtec(GlobalMap(day60; mapping=SLM()), -11.0u"°", 0.0u"°", DateTime(2021, 3, 1))
+    @test vtec(m, -11.0u"°", 0.0u"°", DateTime(2021, 3, 1)) ≈ vtec(GlobalMap(day60; mapping=SLM()), -11.0u"°", 0.0u"°", DateTime(2021, 3, 1)) rtol=1e-14
 end
 
 @testitem "IONEX records: `nan` as a missing value" setup=[Track] begin
     using Dates, Uncertain
     using Unitful: °
     using IonosphericRM: read_ionex
+    using Gzip_jll: gzip
     using .Track: TECU
     # UQRG 2022-02-20, maps 06:30–07:00 on 50–40°N, 25–45°E; the 06:45 RMS map has `nan` at 45°N 35°E
     path = joinpath(Track.DATA, "uqrg0510.22i_crop.gz")
@@ -512,7 +585,7 @@ end
     # `nan` in any case; any other non-number fails to parse
     function respelled(s)
         out = tempname()
-        write(out, replace(read(`gzip -dc $path`, String), "  nan" => s))
+        write(out, replace(read(`$(gzip()) -dc $path`, String), "  nan" => s))
         out
     end
     @testset for s in ["  NaN", "  NAN"]
@@ -534,12 +607,13 @@ end
     a, b = read_ionex.([day59, day60])
     rekey(A; kw...) = KeyedArray(AxisKeys.keyless_unname(A); named_axiskeys(A)..., kw...)
     @testset for b′ in [(; b..., tec=rekey(b.tec; lat=(-12.5:-2.5:-47.5)u"°")), (; b..., tec=rekey(b.tec; lon=(-5.0:5.0:60.0)u"°")),
-                        (; b..., radius=6371.2u"km"), (; b..., height=400u"km"), (; b..., mapping="COSZ")]
+                        (; b..., radius=6371.2u"km"), (; b..., height=400u"km"), (; b..., mapping_function="COSZ")]
         @test_throws ArgumentError append_ionex(a, b′)
     end
     # RMS maps join like TEC maps, and only with RMS maps
     @test append_ionex((; a..., rms=a.tec), (; b..., rms=2b.tec)).rms == cat(a.tec[:, :, 1:3], 2b.tec; dims=3)
-    @test_throws MethodError append_ionex(a, (; b..., rms=b.tec))
+    @test_throws ArgumentError("IONEX files differ in RMS maps: present in one, absent in the other") append_ionex(a, (; b..., rms=b.tec))
+    @test_throws ArgumentError("IONEX files differ in RMS maps: present in one, absent in the other") append_ionex((; a..., rms=a.tec), b)
     # a one-interval gap interpolates like any map interval; a longer one does not
     shifted(I, Δ) = (; I..., tec=rekey(I.tec; epoch=axiskeys(I.tec, :epoch) .+ Δ))
     @test axiskeys(append_ionex(a, shifted(b, Hour(1))).tec, :epoch) == DateTime(2021, 2, 28, 21):Hour(1):DateTime(2021, 3, 1, 7)

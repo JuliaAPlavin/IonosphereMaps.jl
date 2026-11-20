@@ -13,8 +13,6 @@ function geodetic_up(x)
     SVector(cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat))
 end
 
-above_horizon(ray) = dot(ray.direction, geodetic_up(ray.origin)) > 0
-
 geocentric_latlon(x) = (; lat=asin(x[3] / norm(x)), lon=atan(x[2], x[1]))
 
 # point where the ray o + s·k (s > 0) from inside the sphere |x| = r crosses it
@@ -33,7 +31,7 @@ function bpar(x, k, t)
     (; lat, lon) = geocentric_latlon(x)
     b = igrf(yeardecimal(t), ustrip(u"m", norm(x)), lat, lon) * u"nT"   # geocentric (north, east, down)
     north = SVector(-sin(lat) * cos(lon), -sin(lat) * sin(lon), cos(lat))
-    east = SVector(-sin(lon), cos(lon), 0.0)
+    east = SVector(-sin(lon), cos(lon), zero(lon))
     down = -SVector(cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat))
     dot(b[1] * north + b[2] * east + b[3] * down, -k)
 end
