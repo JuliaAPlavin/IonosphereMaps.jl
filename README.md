@@ -1,6 +1,6 @@
 # IonosphereMaps.jl
 
-<!-- animation: examples/ionosphere_viewer.jl, user-attachments URL -->
+https://github.com/user-attachments/assets/312ebf5d-184c-4118-b050-54a2c93b2c58
 
 Ionosphere along lines of sight, from IONEX global maps.
 
