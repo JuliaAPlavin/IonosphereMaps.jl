@@ -6,7 +6,7 @@ using DateFormats: julian_day, yeardecimal
 using Gzip_jll: gzip
 using LinearAlgebra
 using StaticArrays
-using SkyCoords: AbstractSkyCoords, ICRSCoords, cartesian
+using SkyCoords: AbstractSkyCoords, ICRSCoords, CartesianCoords
 using SatelliteToolboxGeomagneticField: igrf
 using SatelliteToolboxTransformations: r_eci_to_ecef, J2000, PEF, ecef_to_geodetic, geodetic_to_ecef
 using Uncertain: ±ᵤ
@@ -53,7 +53,7 @@ struct LineOfSight{S, C<:AbstractSkyCoords}
     source::C
 end
 
-Ray(los::LineOfSight, t::DateTime) = Ray(los.site, source_direction(convert(ICRSCoords, los.source), t))
+Ray(los::LineOfSight, t::DateTime) = Ray(los.site, source_direction(los.source, t))
 Ray(ray::Ray, t::DateTime) = ray
 
 include("geometry.jl")
