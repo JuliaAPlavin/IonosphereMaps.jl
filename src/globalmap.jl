@@ -43,7 +43,7 @@ end
 GlobalMap(paths; mapping) = GlobalMap(foldl(append_ionex, map(read_ionex, paths)), mapping)
 GlobalMap(path::AbstractString; mapping) = GlobalMap((path,); mapping)
 
-# `b`'s maps from its first epoch on replace `a`'s
+# `b`'s maps from its first epoch on replace `a`'s: at midnight, the next day's 00:00 map replaces the 24:00 one, as in AIPS TECOR, CASA and spinifex
 function append_ionex(a, b)
     for (k, x, y) in [(:lat, axiskeys(a.tec, :lat), axiskeys(b.tec, :lat)), (:lon, axiskeys(a.tec, :lon), axiskeys(b.tec, :lon)),
                       (:radius, a.radius, b.radius), (:height, a.height, b.height), (:mapping_function, a.mapping_function, b.mapping_function)]
