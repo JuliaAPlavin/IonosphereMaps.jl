@@ -14,7 +14,7 @@ t = DateTime(2025, 1, 26, 23, 30)
 ionospheric_tec(m, los, t)                      # 5.39e17 m^-2 ±ᵤ 5.81e16 m^-2
 ionospheric_rm(m, los, t)                       # -2.257 rad m^-2 ±ᵤ 0.243 rad m^-2
 ionospheric_group_delay(m, los, t, 8.4u"GHz")   # 1.026e-9 s ±ᵤ 1.11e-10 s
-vtec(m, -30u"°", 21u"°", t)                     # 1.639e17 m^-2 ±ᵤ 2.21e16 m^-2
+vtec(m, (; lat=-30u"°", lon=21u"°"), t)         # 1.639e17 m^-2 ±ᵤ 2.21e16 m^-2
 ```
 
 ## Model
@@ -35,7 +35,7 @@ Mappings:
 - `MSLM()`: CODE's modified single-layer mapping (506.7 km, α = 0.9782), the one CODE produces its maps with.
 - `Petrov2023()`: Petrov (2023, AJ 165, 183) mapping fitted to VLBI astrometry, its TEC scale factor k = 0.85 included.
 
-`vtec(m, lat, lon, t)` is the maps' own VTEC at a point on the shell; the mapping plays no role.
+`vtec(m, p, t)` is the maps' own VTEC at a point `p = (; lat, lon)` on the shell (geocentric); the mapping plays no role.
 
 ## Uncertainties
 

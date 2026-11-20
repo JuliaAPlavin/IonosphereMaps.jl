@@ -111,19 +111,19 @@ end
 interpolate(::Nothing, lat, lon, t, k) = nothing
 
 """
-    vtec(m::GlobalMap, lat, lon, t::DateTime)
+    vtec(m::GlobalMap, p, t::DateTime)
 
-Vertical total electron content (m⁻²) of the maps of `m` at geocentric `lat`, `lon` on their shell (angles Unitful,
-or plain radians) at UTC `t`, interpolated as described in [`GlobalMap`](@ref). For maps with RMS maps, returns
+Vertical total electron content (m⁻²) of the maps of `m` at the point `p` of their shell, geocentric `(; lat, lon)`
+or any object with these properties (angles Unitful, or plain radians), at UTC `t`, interpolated as described in [`GlobalMap`](@ref). For maps with RMS maps, returns
 `tec ±ᵤ σ` (`Uncertain.Value`), σ from the map RMS. This is the maps' own data, not a model prediction:
 the mapping of `m` plays no role (e.g. no scale factor k of `Petrov2023`).
 """
-vtec(m::GlobalMap, lat, lon, t::DateTime) = vtec_in_interval(m, lat, lon, t, mapindex(m.ionex, t))
+vtec(m::GlobalMap, p, t::DateTime) = vtec_in_interval(m, p, t, mapindex(m.ionex, t))
 # VTEC at t in the map interval k (from mapindex)
 # RMS is interpolated with the TEC weights: errors at neighbouring nodes of a smooth map are close to fully correlated.
-function vtec_in_interval(m::GlobalMap, lat, lon, t, k)
+function vtec_in_interval(m::GlobalMap, p, t, k)
     (; tec, rms) = m.ionex
-    lat, lon = uconvert(u"°", lat), uconvert(u"°", lon)
+    lat, lon = uconvert(u"°", p.lat), uconvert(u"°", p.lon)
     with_rms(interpolate(tec, lat, lon, t, k), interpolate(rms, lat, lon, t, k)) * TECU
 end
 with_rms(v, σ) = v ±ᵤ σ
@@ -155,7 +155,7 @@ function slant_tec(m::GlobalMap, ray, t)
     pp = pierce(ray.origin, ray.direction, I.radius + I.height)
     up = geodetic_up(ray.origin)
     # NaN below the geodetic horizon of the ray origin
-    stec = dot(ray.direction, up) > 0 ? vtec_in_interval(m, geocentric_latlon(pp)..., t, k) * mapping_factor(m.mapping, I, pp, ray, up) :
+    stec = dot(ray.direction, up) > 0 ? vtec_in_interval(m, geocentric_latlon(pp), t, k) * mapping_factor(m.mapping, I, pp, ray, up) :
            nan_like(I.rms) * TECU
     (; stec, pp)
 end
